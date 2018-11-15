@@ -86,23 +86,19 @@ dsLit l = do
     HsWordPrim   _ w -> return (Lit (mkMachWordWrap dflags w))
     HsInt64Prim  _ i -> return (Lit (mkMachInt64Wrap dflags i))
     HsWord64Prim _ w -> return (Lit (mkMachWord64Wrap dflags w))
-    HsFloatPrim  _ f -> return (Lit (MachFloat (fl_value f)))
-    HsDoublePrim _ d -> return (Lit (MachDouble (fl_value d)))
+    HsFloatPrim  _ f -> return (Lit (MachFloat (rationalFromFractionalLit f)))
+    HsDoublePrim _ d -> return (Lit (MachDouble (rationalFromFractionalLit d)))
     HsChar _ c       -> return (mkCharExpr c)
     HsString _ str   -> mkStringExprFS str
     HsInteger _ i _  -> mkIntegerExpr i
     HsInt _ i        -> return (mkIntExpr dflags (il_value i))
     XLit x           -> pprPanic "dsLit" (ppr x)
-    HsRat _ (FL _ _ val) ty -> do
-      num   <- mkIntegerExpr (numerator val)
-      denom <- mkIntegerExpr (denominator val)
-      return (mkCoreConApps ratio_data_con [Type integer_ty, num, denom])
-      where
-        (ratio_data_con, integer_ty)
-            = case tcSplitTyConApp ty of
-                    (tycon, [i_ty]) -> ASSERT(isIntegerTy i_ty && tycon `hasKey` ratioTyConKey)
-                                       (head (tyConDataCons tycon), i_ty)
-                    x -> pprPanic "dsLit" (ppr x)
+    HsRat _ fl _     -> case fl of
+                          FL { fl_signi = fl_signi, fl_exp = fl_exp } -> do
+                            mkRational <- dsLookupGlobalId mkRationalName
+                            litI <- mkIntegerExpr fl_signi
+                            litE <- mkIntegerExpr fl_exp
+                            return ((Var mkRational) `App` litI `App` litE)
 
 dsOverLit :: HsOverLit GhcTc -> DsM CoreExpr
 dsOverLit lit = do { dflags <- getDynFlags
@@ -402,8 +398,8 @@ hsLitKey dflags (HsWordPrim   _ w) = mkMachWordWrap dflags w
 hsLitKey dflags (HsInt64Prim  _ i) = mkMachInt64Wrap  dflags i
 hsLitKey dflags (HsWord64Prim _ w) = mkMachWord64Wrap dflags w
 hsLitKey _      (HsCharPrim   _ c) = mkMachChar            c
-hsLitKey _      (HsFloatPrim  _ f) = mkMachFloat           (fl_value f)
-hsLitKey _      (HsDoublePrim _ d) = mkMachDouble          (fl_value d)
+hsLitKey _      (HsFloatPrim  _ f) = mkMachFloat           (rationalFromFractionalLit f)
+hsLitKey _      (HsDoublePrim _ d) = mkMachDouble          (rationalFromFractionalLit d)
 hsLitKey _      (HsString _ s)     = MachStr (fastStringToByteString s)
 hsLitKey _      l                  = pprPanic "hsLitKey" (ppr l)
 
