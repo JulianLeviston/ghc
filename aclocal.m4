@@ -958,16 +958,10 @@ else
 fi;
 changequote([, ])dnl
 ])
-FP_COMPARE_VERSIONS([$fptools_cv_alex_version],[-ge],[3.0],
-  [Alex3=YES],[Alex3=NO])
-if test ! -f compiler/cmm/CmmLex.hs || test ! -f compiler/parser/Lexer.hs
-then
-    FP_COMPARE_VERSIONS([$fptools_cv_alex_version],[-lt],[3.1.0],
-      [AC_MSG_ERROR([Alex version 3.1.0 or later is required to compile GHC.])])[]
-fi
+FP_COMPARE_VERSIONS([$fptools_cv_alex_version],[-lt],[3.1.7],
+  [AC_MSG_ERROR([Alex version 3.1.7 or later is required to compile GHC.])])[]
 AlexVersion=$fptools_cv_alex_version;
 AC_SUBST(AlexVersion)
-AC_SUBST(Alex3)
 ])
 
 
@@ -2414,7 +2408,11 @@ AC_DEFUN([FIND_LD],[
                    FP_CC_LINKER_FLAG_TRY(bfd, $2) ;;
               "GNU gold"*)
                    FP_CC_LINKER_FLAG_TRY(gold, $2)
-                   LD_NO_GOLD=ld
+                   if test "$cross_compiling" = "yes"; then
+                       AC_MSG_NOTICE([Using ld.gold and assuming that it is not affected by binutils issue 22266]);
+                   else
+                       LD_NO_GOLD=ld;
+                   fi
                    ;;
               "LLD"*)
                    FP_CC_LINKER_FLAG_TRY(lld, $2) ;;

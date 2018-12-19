@@ -880,59 +880,59 @@ callishPrimOpSupported dflags op
                      | otherwise              ->
                          Right (genericIntQuotRemOp (wordWidth dflags))
 
-      Int8QuotRemOp  | (ncg && x86ish)
+      Int8QuotRemOp  | ncg && (x86ish || ppc)
                                      -> Left (MO_S_QuotRem W8)
                      | otherwise     -> Right (genericIntQuotRemOp W8)
+
+      Int16QuotRemOp | ncg && (x86ish || ppc)
+                                     -> Left (MO_S_QuotRem W16)
+                     | otherwise     -> Right (genericIntQuotRemOp W16)
+
 
       WordQuotRemOp  | ncg && (x86ish || ppc) ->
                          Left (MO_U_QuotRem  (wordWidth dflags))
                      | otherwise      ->
                          Right (genericWordQuotRemOp (wordWidth dflags))
 
-      WordQuotRem2Op | (ncg && (x86ish
-                                || ppc))
+      WordQuotRem2Op | (ncg && (x86ish || ppc))
                           || llvm     -> Left (MO_U_QuotRem2 (wordWidth dflags))
                      | otherwise      -> Right (genericWordQuotRem2Op dflags)
 
-      Word8QuotRemOp | (ncg && x86ish)
+      Word8QuotRemOp | ncg && (x86ish || ppc)
                                       -> Left (MO_U_QuotRem W8)
                      | otherwise      -> Right (genericWordQuotRemOp W8)
 
-      WordAdd2Op     | (ncg && (x86ish
-                                || ppc))
+      Word16QuotRemOp| ncg && (x86ish || ppc)
+                                     -> Left (MO_U_QuotRem W16)
+                     | otherwise     -> Right (genericWordQuotRemOp W16)
+
+      WordAdd2Op     | (ncg && (x86ish || ppc))
                          || llvm      -> Left (MO_Add2       (wordWidth dflags))
                      | otherwise      -> Right genericWordAdd2Op
 
-      WordAddCOp     | (ncg && (x86ish
-                                || ppc))
+      WordAddCOp     | (ncg && (x86ish || ppc))
                          || llvm      -> Left (MO_AddWordC   (wordWidth dflags))
                      | otherwise      -> Right genericWordAddCOp
 
-      WordSubCOp     | (ncg && (x86ish
-                                || ppc))
+      WordSubCOp     | (ncg && (x86ish || ppc))
                          || llvm      -> Left (MO_SubWordC   (wordWidth dflags))
                      | otherwise      -> Right genericWordSubCOp
 
-      IntAddCOp      | (ncg && (x86ish
-                                || ppc))
+      IntAddCOp      | (ncg && (x86ish || ppc))
                          || llvm      -> Left (MO_AddIntC    (wordWidth dflags))
                      | otherwise      -> Right genericIntAddCOp
 
-      IntSubCOp      | (ncg && (x86ish
-                                || ppc))
+      IntSubCOp      | (ncg && (x86ish || ppc))
                          || llvm      -> Left (MO_SubIntC    (wordWidth dflags))
                      | otherwise      -> Right genericIntSubCOp
 
-      WordMul2Op     | ncg && (x86ish
-                               || ppc)
+      WordMul2Op     | ncg && (x86ish || ppc)
                          || llvm      -> Left (MO_U_Mul2     (wordWidth dflags))
                      | otherwise      -> Right genericWordMul2Op
-      FloatFabsOp    | (ncg && x86ish
-                               || ppc)
+      FloatFabsOp    | (ncg && x86ish || ppc)
                          || llvm      -> Left MO_F32_Fabs
                      | otherwise      -> Right $ genericFabsOp W32
-      DoubleFabsOp   | (ncg && x86ish
-                               || ppc)
+      DoubleFabsOp   | (ncg && x86ish || ppc)
                          || llvm      -> Left MO_F64_Fabs
                      | otherwise      -> Right $ genericFabsOp W64
 
@@ -1355,6 +1355,42 @@ translateOp _      Word8GtOp       = Just (MO_U_Gt W8)
 translateOp _      Word8LeOp       = Just (MO_U_Le W8)
 translateOp _      Word8LtOp       = Just (MO_U_Lt W8)
 translateOp _      Word8NeOp       = Just (MO_Ne W8)
+
+-- Int16# signed ops
+
+translateOp dflags Int16Extend     = Just (MO_SS_Conv W16 (wordWidth dflags))
+translateOp dflags Int16Narrow     = Just (MO_SS_Conv (wordWidth dflags) W16)
+translateOp _      Int16NegOp      = Just (MO_S_Neg W16)
+translateOp _      Int16AddOp      = Just (MO_Add W16)
+translateOp _      Int16SubOp      = Just (MO_Sub W16)
+translateOp _      Int16MulOp      = Just (MO_Mul W16)
+translateOp _      Int16QuotOp     = Just (MO_S_Quot W16)
+translateOp _      Int16RemOp      = Just (MO_S_Rem W16)
+
+translateOp _      Int16EqOp       = Just (MO_Eq W16)
+translateOp _      Int16GeOp       = Just (MO_S_Ge W16)
+translateOp _      Int16GtOp       = Just (MO_S_Gt W16)
+translateOp _      Int16LeOp       = Just (MO_S_Le W16)
+translateOp _      Int16LtOp       = Just (MO_S_Lt W16)
+translateOp _      Int16NeOp       = Just (MO_Ne W16)
+
+-- Word16# unsigned ops
+
+translateOp dflags Word16Extend     = Just (MO_UU_Conv W16 (wordWidth dflags))
+translateOp dflags Word16Narrow     = Just (MO_UU_Conv (wordWidth dflags) W16)
+translateOp _      Word16NotOp      = Just (MO_Not W16)
+translateOp _      Word16AddOp      = Just (MO_Add W16)
+translateOp _      Word16SubOp      = Just (MO_Sub W16)
+translateOp _      Word16MulOp      = Just (MO_Mul W16)
+translateOp _      Word16QuotOp     = Just (MO_U_Quot W16)
+translateOp _      Word16RemOp      = Just (MO_U_Rem W16)
+
+translateOp _      Word16EqOp       = Just (MO_Eq W16)
+translateOp _      Word16GeOp       = Just (MO_U_Ge W16)
+translateOp _      Word16GtOp       = Just (MO_U_Gt W16)
+translateOp _      Word16LeOp       = Just (MO_U_Le W16)
+translateOp _      Word16LtOp       = Just (MO_U_Lt W16)
+translateOp _      Word16NeOp       = Just (MO_Ne W16)
 
 -- Char# ops
 

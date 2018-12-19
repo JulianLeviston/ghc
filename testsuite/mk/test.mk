@@ -25,8 +25,7 @@ export MAKE
 
 RUNTESTS     = $(TOP)/driver/runtests.py
 COMPILER     = ghc
-CONFIGDIR    = $(TOP)/config
-CONFIG       = $(CONFIGDIR)/$(COMPILER)
+CONFIG       = $(TOP)/config/$(COMPILER)
 
 ifeq "$(GhcUnregisterised)" "YES"
     # Otherwise C backend generates many warnings about
@@ -37,7 +36,8 @@ endif
 
 # TEST_HC_OPTS is passed to every invocation of TEST_HC
 # in nested Makefiles
-TEST_HC_OPTS = -dcore-lint -dcmm-lint -no-user-$(GhcPackageDbFlag) -rtsopts $(EXTRA_HC_OPTS)
+TEST_HC_OPTS = -dcore-lint -dstg-lint -dcmm-lint \
+			   -no-user-$(GhcPackageDbFlag) -rtsopts $(EXTRA_HC_OPTS)
 
 ifeq "$(MinGhcVersion711)" "YES"
 # Don't warn about missing specialisations. They can only occur with `-O`, but
@@ -240,10 +240,11 @@ else
 RUNTEST_OPTS += -e config.local=True
 endif
 
+RUNTEST_OPTS += -e 'config.integer_backend="$(INTEGER_LIBRARY)"'
+
 RUNTEST_OPTS +=  \
 	--rootdir=. \
 	--config-file=$(CONFIG) \
-	-e 'config.confdir="$(CONFIGDIR)"' \
 	-e 'config.platform="$(TARGETPLATFORM)"' \
 	-e 'config.os="$(TargetOS_CPP)"' \
 	-e 'config.arch="$(TargetARCH_CPP)"' \

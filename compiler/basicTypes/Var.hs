@@ -216,7 +216,7 @@ in its @VarDetails@.
 -- | Variable
 --
 -- Essentially a typed 'Name', that may also contain some additional information
--- about the 'Var' and it's use sites.
+-- about the 'Var' and its use sites.
 data Var
   = TyVar {  -- Type and kind variables
              -- see Note [Kind and type variables]
@@ -385,7 +385,7 @@ updateVarTypeM f id = do { ty' <- f (varType id)
 -- See Note [VarBndrs, TyCoVarBinders, TyConBinders, and visibility] in TyCoRep
 data ArgFlag = Inferred | Specified | Required
   deriving (Eq, Ord, Data)
-  -- (<) on ArgFlag meant "is less visible than"
+  -- (<) on ArgFlag means "is less visible than"
 
 -- | Does this 'ArgFlag' classify an argument that is written in Haskell?
 isVisibleArgFlag :: ArgFlag -> Bool

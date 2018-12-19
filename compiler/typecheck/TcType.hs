@@ -64,7 +64,7 @@ module TcType (
   tcSplitFunTy_maybe, tcSplitFunTys, tcFunArgTy, tcFunResultTy, tcFunResultTyN,
   tcSplitFunTysN,
   tcSplitTyConApp, tcSplitTyConApp_maybe,
-  tcRepSplitTyConApp_maybe, tcRepSplitTyConApp_maybe',
+  tcRepSplitTyConApp, tcRepSplitTyConApp_maybe, tcRepSplitTyConApp_maybe',
   tcTyConAppTyCon, tcTyConAppTyCon_maybe, tcTyConAppArgs,
   tcSplitAppTy_maybe, tcSplitAppTy, tcSplitAppTys, tcRepSplitAppTy_maybe,
   tcRepGetNumAppTys,
@@ -100,7 +100,7 @@ module TcType (
   isImprovementPred,
 
   -- * Finding type instances
-  tcTyFamInsts, isTyFamFree,
+  tcTyFamInsts, tcTyFamInstsAndVis, tcTyConAppTyFamInstsAndVis, isTyFamFree,
 
   -- * Finding "exact" (non-dead) type variables
   exactTyCoVarsOfType, exactTyCoVarsOfTypes,
@@ -122,7 +122,7 @@ module TcType (
 
   --------------------------------
   -- Rexported from Kind
-  Kind, typeKind,
+  Kind, typeKind, tcTypeKind,
   liftedTypeKind,
   constraintKind,
   isLiftedTypeKind, isUnliftedTypeKind, classifiesTypeWithValues,
@@ -224,7 +224,7 @@ import FastString
 import ErrUtils( Validity(..), MsgDoc, isValid )
 import qualified GHC.LanguageExtensions as LangExt
 
-import Data.List  ( mapAccumL, foldl' )
+import Data.List  ( mapAccumL )
 import Data.Functor.Identity( Identity(..) )
 import Data.IORef
 import Data.List.NonEmpty( NonEmpty(..) )
@@ -858,20 +858,85 @@ promoteSkolemsX tclvl = mapAccumL (promoteSkolemX tclvl)
 -- we don't need to take <big type> into account when asking if
 -- the calls on the RHS are smaller than the LHS
 tcTyFamInsts :: Type -> [(TyCon, [Type])]
-tcTyFamInsts ty
-  | Just exp_ty <- tcView ty    = tcTyFamInsts exp_ty
-tcTyFamInsts (TyVarTy _)        = []
-tcTyFamInsts (TyConApp tc tys)
-  | isTypeFamilyTyCon tc        = [(tc, take (tyConArity tc) tys)]
-  | otherwise                   = concat (map tcTyFamInsts tys)
-tcTyFamInsts (LitTy {})         = []
-tcTyFamInsts (ForAllTy bndr ty) = tcTyFamInsts (binderType bndr)
-                                  ++ tcTyFamInsts ty
-tcTyFamInsts (FunTy ty1 ty2)    = tcTyFamInsts ty1 ++ tcTyFamInsts ty2
-tcTyFamInsts (AppTy ty1 ty2)    = tcTyFamInsts ty1 ++ tcTyFamInsts ty2
-tcTyFamInsts (CastTy ty _)      = tcTyFamInsts ty
-tcTyFamInsts (CoercionTy _)     = []  -- don't count tyfams in coercions,
-                                      -- as they never get normalized, anyway
+tcTyFamInsts = map (\(_,b,c) -> (b,c)) . tcTyFamInstsAndVis
+
+-- | Like 'tcTyFamInsts', except that the output records whether the
+-- type family and its arguments occur as an /invisible/ argument in
+-- some type application. This information is useful because it helps GHC know
+-- when to turn on @-fprint-explicit-kinds@ during error reporting so that
+-- users can actually see the type family being mentioned.
+--
+-- As an example, consider:
+--
+-- @
+-- class C a
+-- data T (a :: k)
+-- type family F a :: k
+-- instance C (T @(F Int) (F Bool))
+-- @
+--
+-- There are two occurrences of the type family `F` in that `C` instance, so
+-- @'tcTyFamInstsAndVis' (C (T \@(F Int) (F Bool)))@ will return:
+--
+-- @
+-- [ ('True',  F, [Int])
+-- , ('False', F, [Bool]) ]
+-- @
+--
+-- @F Int@ is paired with 'True' since it appears as an /invisible/ argument
+-- to @C@, whereas @F Bool@ is paired with 'False' since it appears an a
+-- /visible/ argument to @C@.
+--
+-- See also @Note [Kind arguments in error messages]@ in "TcErrors".
+tcTyFamInstsAndVis :: Type -> [(Bool, TyCon, [Type])]
+tcTyFamInstsAndVis = tcTyFamInstsAndVisX False
+
+tcTyFamInstsAndVisX
+  :: Bool -- ^ Is this an invisible argument to some type application?
+  -> Type -> [(Bool, TyCon, [Type])]
+tcTyFamInstsAndVisX = go
+  where
+    go is_invis_arg ty
+      | Just exp_ty <- tcView ty       = go is_invis_arg exp_ty
+    go _ (TyVarTy _)                   = []
+    go is_invis_arg (TyConApp tc tys)
+      | isTypeFamilyTyCon tc
+      = [(is_invis_arg, tc, take (tyConArity tc) tys)]
+      | otherwise
+      = tcTyConAppTyFamInstsAndVisX is_invis_arg tc tys
+    go _            (LitTy {})         = []
+    go is_invis_arg (ForAllTy bndr ty) = go is_invis_arg (binderType bndr)
+                                         ++ go is_invis_arg ty
+    go is_invis_arg (FunTy ty1 ty2)    = go is_invis_arg ty1
+                                         ++ go is_invis_arg ty2
+    go is_invis_arg ty@(AppTy _ _)     =
+      let (ty_head, ty_args) = splitAppTys ty
+          ty_arg_flags       = appTyArgFlags ty_head ty_args
+      in go is_invis_arg ty_head
+         ++ concat (zipWith (\flag -> go (isInvisibleArgFlag flag))
+                            ty_arg_flags ty_args)
+    go is_invis_arg (CastTy ty _)      = go is_invis_arg ty
+    go _            (CoercionTy _)     = [] -- don't count tyfams in coercions,
+                                            -- as they never get normalized,
+                                            -- anyway
+
+-- | In an application of a 'TyCon' to some arguments, find the outermost
+-- occurrences of type family applications within the arguments. This function
+-- will not consider the 'TyCon' itself when checking for type family
+-- applications.
+--
+-- See 'tcTyFamInstsAndVis' for more details on how this works (as this
+-- function is called inside of 'tcTyFamInstsAndVis').
+tcTyConAppTyFamInstsAndVis :: TyCon -> [Type] -> [(Bool, TyCon, [Type])]
+tcTyConAppTyFamInstsAndVis = tcTyConAppTyFamInstsAndVisX False
+
+tcTyConAppTyFamInstsAndVisX
+  :: Bool -- ^ Is this an invisible argument to some type application?
+  -> TyCon -> [Type] -> [(Bool, TyCon, [Type])]
+tcTyConAppTyFamInstsAndVisX is_invis_arg tc tys =
+  let (invis_tys, vis_tys) = partitionInvisibleTypes tc tys
+  in concat $ map (tcTyFamInstsAndVisX True)         invis_tys
+           ++ map (tcTyFamInstsAndVisX is_invis_arg) vis_tys
 
 isTyFamFree :: Type -> Bool
 -- ^ Check that a type does not contain any type family applications.
@@ -1231,7 +1296,7 @@ See also Note [The tcType invariant] in TcHsType.
 
 During type inference, we maintain this invariant
 
-   (INV-TK): it is legal to call 'typeKind' on any Type ty,
+   (INV-TK): it is legal to call 'tcTypeKind' on any Type ty,
              /without/ zonking ty
 
 For example, suppose
@@ -1241,12 +1306,12 @@ For example, suppose
     a :: kappa
 then consider the type
     (a Int)
-If we call typeKind on that, we'll crash, because the (un-zonked)
+If we call tcTypeKind on that, we'll crash, because the (un-zonked)
 kind of 'a' is just kappa, not an arrow kind.  If we zonk first
 we'd be fine, but that is too tiresome, so instead we maintain
 (INV-TK).  So we do not form (a Int); instead we form
     (a |> co) Int
-and typeKind has no problem with that.
+and tcTypeKind has no problem with that.
 
 Bottom line: we want to keep that 'co' /even though it is Refl/.
 
@@ -1498,7 +1563,7 @@ tcSplitFunTy_maybe :: Type -> Maybe (Type, Type)
 tcSplitFunTy_maybe ty | Just ty' <- tcView ty         = tcSplitFunTy_maybe ty'
 tcSplitFunTy_maybe (FunTy arg res) | not (isPredTy arg) = Just (arg, res)
 tcSplitFunTy_maybe _                                    = Nothing
-        -- Note the typeKind guard
+        -- Note the tcTypeKind guard
         -- Consider     (?x::Int) => Bool
         -- We don't want to treat this as a function type!
         -- A concrete example is test tc230:
@@ -1649,8 +1714,8 @@ tcEqType ty1 ty2
   = isNothing (tc_eq_type tcView ki1 ki2) &&
     isNothing (tc_eq_type tcView ty1 ty2)
   where
-    ki1 = typeKind ty1
-    ki2 = typeKind ty2
+    ki1 = tcTypeKind ty1
+    ki2 = tcTypeKind ty2
 
 -- | Just like 'tcEqType', but will return True for types of different kinds
 -- as long as their non-coercion structure is identical.
@@ -1667,8 +1732,8 @@ tcEqTypeVis :: TcType -> TcType -> Maybe Bool
 tcEqTypeVis ty1 ty2
   = tc_eq_type tcView ty1 ty2 <!> invis (tc_eq_type tcView ki1 ki2)
   where
-    ki1 = typeKind ty1
-    ki2 = typeKind ty2
+    ki1 = tcTypeKind ty1
+    ki2 = tcTypeKind ty2
 
       -- convert Just True to Just False
     invis :: Maybe Bool -> Maybe Bool
@@ -1905,8 +1970,8 @@ boxEqPred eq_rel ty1 ty2
                                     --       so we can't abstract over it
                                     -- Nothing fundamental: we could add it
  where
-   k1 = typeKind ty1
-   k2 = typeKind ty2
+   k1 = tcTypeKind ty1
+   k2 = tcTypeKind ty2
    homo_kind = k1 `tcEqType` k2
 
 pickCapturedPreds

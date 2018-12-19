@@ -26,13 +26,13 @@ testRules :: Rules ()
 testRules = do
     root <- buildRootRules
 
-    -- | Using program shipped with testsuite to generate ghcconfig file.
+    -- Using program shipped with testsuite to generate ghcconfig file.
     root -/- ghcConfigProgPath ~> do
         ghc <- builderPath $ Ghc CompileHs Stage0
         createDirectory $ takeDirectory (root -/- ghcConfigProgPath)
         cmd ghc [ghcConfigHsPath, "-o" , root -/- ghcConfigProgPath]
 
-    -- | TODO : Use input test compiler and not just stage2 compiler.
+    -- TODO : Use input test compiler and not just stage2 compiler.
     root -/- ghcConfigPath ~> do
         ghcPath <- needFile Stage1 ghc
         need [root -/- ghcConfigProgPath]
@@ -75,13 +75,18 @@ testRules = do
             setEnv "CHECK_API_ANNOTATIONS" annotationsPath
 
         -- Execute the test target.
-        buildWithCmdOptions env $ target (vanillaContext Stage2 compiler) RunTest [] []
+        -- We override the verbosity setting to make sure the user can see
+        -- the test output: https://ghc.haskell.org/trac/ghc/ticket/15951.
+        withVerbosity Loud $ buildWithCmdOptions env $
+            target (vanillaContext Stage2 compiler) RunTest [] []
 
 -- | Build extra programs and libraries required by testsuite
 needTestsuitePackages :: Action ()
 needTestsuitePackages = do
     targets   <- mapM (needFile Stage1) =<< testsuitePackages
-    needIservBins
+    -- iserv is not supported under Windows
+    windows <- windowsHost
+    when (not windows) needIservBins
     need targets
 
 -- | Build the timeout program.
@@ -104,9 +109,17 @@ timeoutProgBuilder = do
             makeExecutable (root -/- timeoutPath)
 
 needIservBins :: Action ()
-needIservBins =
+needIservBins = do
+    rtsways <- interpretInContext (vanillaContext Stage1 ghc) getRtsWays
     need =<< traverse programPath
-      [ Context Stage1 iserv w | w <- [vanilla, profiling, dynamic] ]
+               [ Context Stage1 iserv w
+               | w <- [vanilla, profiling
+                    -- TODO dynamic way has been reverted as the dynamic build
+                    --      is broken. See #15837.
+                    -- , dynamic
+                    ]
+               , w `elem` rtsways
+               ]
 
 needTestBuilders :: Action ()
 needTestBuilders = do

@@ -1437,8 +1437,8 @@ ocGetNames_PEi386 ( ObjectCode* oc )
 {
    bool has_code_section = false;
 
-   SymbolName* sname;
-   SymbolAddr* addr;
+   SymbolName* sname = NULL;
+   SymbolAddr* addr = NULL;
    unsigned int   i;
 
    COFF_HEADER_INFO *info = oc->info->ch_info;
@@ -1567,11 +1567,10 @@ ocGetNames_PEi386 ( ObjectCode* oc )
             Allocate zeroed space for it */
         bss_sz = section.info->virtualSize;
         if (bss_sz < section.size) { bss_sz = section.size; }
-        bss_sz = section.info->alignment;
         zspace = stgCallocBytes(1, bss_sz, "ocGetNames_PEi386(anonymous bss)");
-        oc->sections[i].start = getAlignedMemory(zspace, section);
+        oc->sections[i].start = zspace;
         oc->sections[i].size  = bss_sz;
-        addProddableBlock(oc, zspace, bss_sz);
+        section  = oc->sections[i];
         /* debugBelch("BSS anon section at 0x%x\n", zspace); */
       }
 
@@ -1592,9 +1591,9 @@ ocGetNames_PEi386 ( ObjectCode* oc )
       if (sz < section.info->virtualSize) sz = section.info->virtualSize;
 
       start = section.start;
-      end   = start + sz - 1;
+      end   = start + sz;
 
-      if (kind != SECTIONKIND_OTHER && end >= start) {
+      if (kind != SECTIONKIND_OTHER && end > start) {
           /* See Note [Section alignment].  */
           addCopySection(oc, &oc->sections[i], kind, SECTION_NOMEM, start, sz);
           addProddableBlock(oc, oc->sections[i].start, sz);
@@ -1604,7 +1603,7 @@ ocGetNames_PEi386 ( ObjectCode* oc )
    /* Copy exported symbols into the ObjectCode. */
 
    oc->n_symbols = info->numberOfSymbols;
-   oc->symbols   = stgCallocBytes(sizeof(SymbolName*), oc->n_symbols,
+   oc->symbols   = stgCallocBytes(sizeof(Symbol_t), oc->n_symbols,
                                   "ocGetNames_PEi386(oc->symbols)");
 
    /* Work out the size of the global BSS section */
@@ -1751,7 +1750,8 @@ ocGetNames_PEi386 ( ObjectCode* oc )
          sname = strdup (sname);
          IF_DEBUG(linker, debugBelch("addSymbol %p `%s'\n", addr, sname));
          ASSERT(i < (uint32_t)oc->n_symbols);
-         oc->symbols[i] = sname;
+         oc->symbols[i].name = sname;
+         oc->symbols[i].addr = addr;
          if (isWeak) {
              setWeakSymbol(oc, sname);
          }
@@ -1762,7 +1762,8 @@ ocGetNames_PEi386 ( ObjectCode* oc )
       } else {
           /* We're skipping the symbol, but if we ever load this
           object file we'll want to skip it then too. */
-          oc->symbols[i] = NULL;
+          oc->symbols[i].name = NULL;
+          oc->symbols[i].addr = NULL;
       }
 
       i += getSymNumberOfAuxSymbols (info, sym);
@@ -2251,7 +2252,7 @@ resolveSymbolAddr_PEi386 (pathchar* buffer, int size,
                                    "resolveSymbolAddr");
       int blanks = 0;
       for (int i = 0; i < obj->n_symbols; i++) {
-          SymbolName* sym = obj->symbols[i];
+          SymbolName* sym = obj->symbols[i].name;
           if (sym == NULL)
             {
                blanks++;

@@ -46,6 +46,7 @@ import SrcLoc
 import THNames
 import TcUnify
 import TcEnv
+import Coercion( etaExpandCoAxBranch )
 import FileCleanup ( newTempName, TempFileLifetime(..) )
 
 import Control.Monad
@@ -1189,15 +1190,16 @@ reifyInstances th_nm th_tys
                do { (rn_ty, fvs) <- rnLHsType doc rdr_ty
                   ; return ((tv_names, rn_ty), fvs) }
         ; (_tvs, ty)
-            <- failIfEmitsConstraints $  -- avoid error cascade if there are unsolved
-               tcImplicitTKBndrs ReifySkol tv_names $
+            <- pushTcLevelM_   $
+               solveEqualities $ -- Avoid error cascade if there are unsolved
+               bindImplicitTKBndrs_Skol tv_names $
                fst <$> tcLHsType rn_ty
         ; ty <- zonkTcTypeToType ty
                 -- Substitute out the meta type variables
                 -- In particular, the type might have kind
                 -- variables inside it (Trac #7477)
 
-        ; traceTc "reifyInstances" (ppr ty $$ ppr (typeKind ty))
+        ; traceTc "reifyInstances" (ppr ty $$ ppr (tcTypeKind ty))
         ; case splitTyConApp_maybe ty of   -- This expands any type synonyms
             Just (tc, tys)                 -- See Trac #7910
                | Just cls <- tyConClass_maybe tc
@@ -1637,7 +1639,7 @@ annotThType :: Bool   -- True <=> annotate
 annotThType _    _  th_ty@(TH.SigT {}) = return th_ty
 annotThType True ty th_ty
   | not $ isEmptyVarSet $ filterVarSet isTyVar $ tyCoVarsOfType ty
-  = do { let ki = typeKind ty
+  = do { let ki = tcTypeKind ty
        ; th_ki <- reifyKind ki
        ; return (TH.SigT th_ty th_ki) }
 annotThType _    _ th_ty = return th_ty
@@ -1692,15 +1694,16 @@ reifyFamilyInstances fam_tc fam_insts
 reifyFamilyInstance :: [Bool] -- True <=> the corresponding tv is poly-kinded
                               -- includes only *visible* tvs
                     -> FamInst -> TcM TH.Dec
-reifyFamilyInstance is_poly_tvs inst@(FamInst { fi_flavor = flavor
-                                              , fi_fam = fam
-                                              , fi_tvs = fam_tvs
-                                              , fi_tys = lhs
-                                              , fi_rhs = rhs })
+reifyFamilyInstance is_poly_tvs (FamInst { fi_flavor = flavor
+                                         , fi_axiom = ax
+                                         , fi_fam = fam })
+  | let fam_tc = coAxiomTyCon ax
+        branch = coAxiomSingleBranch ax
+  , CoAxBranch { cab_tvs = tvs, cab_lhs = lhs, cab_rhs = rhs } <- branch
   = case flavor of
       SynFamilyInst ->
                -- remove kind patterns (#8884)
-        do { th_tvs <- reifyTyVarsToMaybe fam_tvs
+        do { th_tvs <- reifyTyVarsToMaybe tvs
            ; let lhs_types_only = filterOutInvisibleTypes fam_tc lhs
            ; th_lhs <- reifyTypes lhs_types_only
            ; annot_th_lhs <- zipWith3M annotThType is_poly_tvs lhs_types_only
@@ -1713,10 +1716,10 @@ reifyFamilyInstance is_poly_tvs inst@(FamInst { fi_flavor = flavor
         do { let -- eta-expand lhs types, because sometimes data/newtype
                  -- instances are eta-reduced; See Trac #9692
                  -- See Note [Eta reduction for data families] in FamInstEnv
-                 (ee_tvs, ee_lhs) = etaExpandFamInstLHS fam_tvs lhs rhs
-                 fam'             = reifyName fam
-                 dataCons         = tyConDataCons rep_tc
-                 isGadt           = isGadtSyntaxTyCon rep_tc
+                 (ee_tvs, ee_lhs, _) = etaExpandCoAxBranch branch
+                 fam'     = reifyName fam
+                 dataCons = tyConDataCons rep_tc
+                 isGadt   = isGadtSyntaxTyCon rep_tc
            ; th_tvs <- reifyTyVarsToMaybe ee_tvs
            ; cons <- mapM (reifyDataCon isGadt (mkTyVarTys ee_tvs)) dataCons
            ; let types_only = filterOutInvisibleTypes fam_tc ee_lhs
@@ -1727,8 +1730,6 @@ reifyFamilyInstance is_poly_tvs inst@(FamInst { fi_flavor = flavor
                then TH.NewtypeInstD [] fam' th_tvs annot_th_tys Nothing (head cons) []
                else TH.DataInstD    [] fam' th_tvs annot_th_tys Nothing       cons  []
            }
-  where
-    fam_tc = famInstTyCon inst
 
 ------------------------------
 reifyType :: TyCoRep.Type -> TcM TH.Type
@@ -1943,7 +1944,7 @@ reify_tc_app tc tys
     -- See Note [Kind annotations on TyConApps]
     maybe_sig_t th_type
       | needs_kind_sig
-      = do { let full_kind = typeKind (mkTyConApp tc tys)
+      = do { let full_kind = tcTypeKind (mkTyConApp tc tys)
            ; th_full_kind <- reifyKind full_kind
            ; return (TH.SigT th_type th_full_kind) }
       | otherwise
@@ -2080,7 +2081,7 @@ reifyModule (TH.Module (TH.PkgName pkgString) (TH.ModName mString)) = do
 mkThAppTs :: TH.Type -> [TH.Type] -> TH.Type
 mkThAppTs fun_ty arg_tys = foldl' TH.AppT fun_ty arg_tys
 
-noTH :: LitString -> SDoc -> TcM a
+noTH :: PtrString -> SDoc -> TcM a
 noTH s d = failWithTc (hsep [text "Can't represent" <+> ptext s <+>
                                 text "in Template Haskell:",
                              nest 2 d])

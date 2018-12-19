@@ -1,4 +1,6 @@
-{-# LANGUAGE CPP, ScopedTypeVariables #-}
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module TcErrors(
        reportUnsolved, reportAllUnsolved, warnAllUnsolved,
@@ -36,7 +38,7 @@ import HsBinds ( PatSynBind(..) )
 import Name
 import RdrName ( lookupGlobalRdrEnv, lookupGRE_Name, GlobalRdrEnv
                , mkRdrUnqual, isLocalGRE, greSrcSpan )
-import PrelNames ( typeableClassName, hasKey, liftedRepDataConKey, tYPETyConKey )
+import PrelNames ( typeableClassName )
 import Id
 import Var
 import VarSet
@@ -64,7 +66,7 @@ import qualified Data.Set as Set
 
 import {-# SOURCE #-} TcHoleErrors ( findValidHoleFits )
 
-import Data.Semigroup   ( Semigroup )
+-- import Data.Semigroup   ( Semigroup )
 import qualified Data.Semigroup as Semigroup
 
 
@@ -146,8 +148,9 @@ reportUnsolved wanted
                                 | warn_out_of_scope      = HoleWarn
                                 | otherwise              = HoleDefer
 
-       ; report_unsolved binds_var type_errors expr_holes
-          type_holes out_of_scope_holes wanted
+       ; report_unsolved type_errors expr_holes
+                         type_holes out_of_scope_holes
+                         binds_var wanted
 
        ; ev_binds <- getTcEvBindsMap binds_var
        ; return (evBindMapBinds ev_binds)}
@@ -162,8 +165,8 @@ reportUnsolved wanted
 reportAllUnsolved :: WantedConstraints -> TcM ()
 reportAllUnsolved wanted
   = do { ev_binds <- newNoTcEvBinds
-       ; report_unsolved ev_binds TypeError
-                         HoleError HoleError HoleError wanted }
+       ; report_unsolved TypeError HoleError HoleError HoleError
+                         ev_binds wanted }
 
 -- | Report all unsolved goals as warnings (but without deferring any errors to
 -- run-time). See Note [Safe Haskell Overlapping Instances Implementation] in
@@ -171,26 +174,26 @@ reportAllUnsolved wanted
 warnAllUnsolved :: WantedConstraints -> TcM ()
 warnAllUnsolved wanted
   = do { ev_binds <- newTcEvBinds
-       ; report_unsolved ev_binds (TypeWarn NoReason)
-                         HoleWarn HoleWarn HoleWarn wanted }
+       ; report_unsolved (TypeWarn NoReason) HoleWarn HoleWarn HoleWarn
+                         ev_binds wanted }
 
 -- | Report unsolved goals as errors or warnings.
-report_unsolved :: EvBindsVar        -- cec_binds
-                -> TypeErrorChoice   -- Deferred type errors
+report_unsolved :: TypeErrorChoice   -- Deferred type errors
                 -> HoleChoice        -- Expression holes
                 -> HoleChoice        -- Type holes
                 -> HoleChoice        -- Out of scope holes
+                -> EvBindsVar        -- cec_binds
                 -> WantedConstraints -> TcM ()
-report_unsolved mb_binds_var type_errors expr_holes
-    type_holes out_of_scope_holes wanted
+report_unsolved type_errors expr_holes
+    type_holes out_of_scope_holes binds_var wanted
   | isEmptyWC wanted
   = return ()
   | otherwise
-  = do { traceTc "reportUnsolved warning/error settings:" $
-           vcat [ text "type errors:" <+> ppr type_errors
-                , text "expr holes:" <+> ppr expr_holes
-                , text "type holes:" <+> ppr type_holes
-                , text "scope holes:" <+> ppr out_of_scope_holes ]
+  = do { traceTc "reportUnsolved {" $
+         vcat [ text "type errors:" <+> ppr type_errors
+              , text "expr holes:" <+> ppr expr_holes
+              , text "type holes:" <+> ppr type_holes
+              , text "scope holes:" <+> ppr out_of_scope_holes ]
        ; traceTc "reportUnsolved (before zonking and tidying)" (ppr wanted)
 
        ; wanted <- zonkWC wanted   -- Zonk to reveal all information
@@ -219,10 +222,11 @@ report_unsolved mb_binds_var type_errors expr_holes
                                  -- See Trac #15539 and c.f. setting ic_status
                                  -- in TcSimplify.setImplicationStatus
                             , cec_warn_redundant = warn_redundant
-                            , cec_binds    = mb_binds_var }
+                            , cec_binds    = binds_var }
 
        ; tc_lvl <- getTcLevel
-       ; reportWanteds err_ctxt tc_lvl wanted }
+       ; reportWanteds err_ctxt tc_lvl wanted
+       ; traceTc "reportUnsolved }" empty }
 
 --------------------------------------------
 --      Internal functions
@@ -599,7 +603,7 @@ reportWanteds ctxt tc_lvl (WC { wc_simple = simples, wc_impl = implics })
 
     is_user_type_error ct _ = isUserTypeErrorCt ct
 
-    is_homo_equality _ (EqPred _ ty1 ty2) = typeKind ty1 `tcEqType` typeKind ty2
+    is_homo_equality _ (EqPred _ ty1 ty2) = tcTypeKind ty1 `tcEqType` tcTypeKind ty2
     is_homo_equality _ _                  = False
 
     is_equality _ (EqPred {}) = True
@@ -1173,7 +1177,7 @@ mkHoleError tidy_simples ctxt ct@(CHoleCan { cc_hole = hole })
   where
     occ       = holeOcc hole
     hole_ty   = ctEvPred (ctEvidence ct)
-    hole_kind = typeKind hole_ty
+    hole_kind = tcTypeKind hole_ty
     tyvars    = tyCoVarsOfTypeList hole_ty
 
     hole_msg = case hole of
@@ -1496,9 +1500,9 @@ mkEqErr1 ctxt ct   -- Wanted or derived;
                          || not (cty1 `pickyEqType` cty2)
                          -> hang (text "When matching" <+> sub_what)
                                2 (vcat [ ppr cty1 <+> dcolon <+>
-                                         ppr (typeKind cty1)
+                                         ppr (tcTypeKind cty1)
                                        , ppr cty2 <+> dcolon <+>
-                                         ppr (typeKind cty2) ])
+                                         ppr (tcTypeKind cty2) ])
                        _ -> text "When matching the kind of" <+> quotes (ppr cty1)
               msg2 = case sub_o of
                        TypeEqOrigin {}
@@ -1746,7 +1750,7 @@ mkTyVarEqErr' dflags ctxt report ct oriented tv1 co1 ty2
         -- Not an occurs check, because F is a type function.
   where
     Pair _ k1 = tcCoercionKind co1
-    k2        = typeKind ty2
+    k2        = tcTypeKind ty2
 
     ty1 = mkTyVarTy tv1
     occ_check_expand       = occCheckForErrors dflags tv1 ty2
@@ -1762,9 +1766,8 @@ mkEqInfoMsg :: Ct -> TcType -> TcType -> SDoc
 --        (b) warning about injectivity if both sides are the same
 --            type function application   F a ~ F b
 --            See Note [Non-injective type functions]
---        (c) warning about -fprint-explicit-kinds if that might be helpful
 mkEqInfoMsg ct ty1 ty2
-  = tyfun_msg $$ ambig_msg $$ invis_msg
+  = tyfun_msg $$ ambig_msg
   where
     mb_fun1 = isTyFun_maybe ty1
     mb_fun2 = isTyFun_maybe ty2
@@ -1772,19 +1775,6 @@ mkEqInfoMsg ct ty1 ty2
     ambig_msg | isJust mb_fun1 || isJust mb_fun2
               = snd (mkAmbigMsg False ct)
               | otherwise = empty
-
-    -- better to check the exp/act types in the CtOrigin than the actual
-    -- mismatched types for suggestion about -fprint-explicit-kinds
-    (act_ty, exp_ty) = case ctOrigin ct of
-      TypeEqOrigin { uo_actual = act
-                   , uo_expected = exp } -> (act, exp)
-      _                                  -> (ty1, ty2)
-
-    invis_msg | Just vis <- tcEqTypeVis act_ty exp_ty
-              , not vis
-              = ppSuggestExplicitKinds
-              | otherwise
-              = empty
 
     tyfun_msg | Just tc1 <- mb_fun1
               , Just tc2 <- mb_fun2
@@ -1929,17 +1919,16 @@ misMatchMsg ct oriented ty1 ty2
   -- These next two cases are when we're about to report, e.g., that
   -- 'LiftedRep doesn't match 'VoidRep. Much better just to say
   -- lifted vs. unlifted
-  | Just (tc1, []) <- splitTyConApp_maybe ty1
-  , tc1 `hasKey` liftedRepDataConKey
+  | isLiftedRuntimeRep ty1
   = lifted_vs_unlifted
 
-  | Just (tc2, []) <- splitTyConApp_maybe ty2
-  , tc2 `hasKey` liftedRepDataConKey
+  | isLiftedRuntimeRep ty2
   = lifted_vs_unlifted
 
   | otherwise  -- So now we have Nothing or (Just IsSwapped)
                -- For some reason we treat Nothing like IsSwapped
   = addArising orig $
+    pprWithExplicitKindsWhenMismatch ty1 ty2 (ctOrigin ct) $
     sep [ text herald1 <+> quotes (ppr ty1)
         , nest padding $
           text herald2 <+> quotes (ppr ty2)
@@ -1974,13 +1963,37 @@ misMatchMsg ct oriented ty1 ty2
       = addArising orig $
         text "Couldn't match a lifted type with an unlifted type"
 
+-- | Prints explicit kinds (with @-fprint-explicit-kinds@) in an 'SDoc' when a
+-- type mismatch occurs to due invisible kind arguments.
+--
+-- This function first checks to see if the 'CtOrigin' argument is a
+-- 'TypeEqOrigin', and if so, uses the expected/actual types from that to
+-- check for a kind mismatch (as these types typically have more surrounding
+-- types and are likelier to be able to glean information about whether a
+-- mismatch occurred in an invisible argument position or not). If the
+-- 'CtOrigin' is not a 'TypeEqOrigin', fall back on the actual mismatched types
+-- themselves.
+pprWithExplicitKindsWhenMismatch :: Type -> Type -> CtOrigin
+                                 -> SDoc -> SDoc
+pprWithExplicitKindsWhenMismatch ty1 ty2 ct =
+  pprWithExplicitKindsWhen mismatch
+  where
+    (act_ty, exp_ty) = case ct of
+      TypeEqOrigin { uo_actual = act
+                   , uo_expected = exp } -> (act, exp)
+      _                                  -> (ty1, ty2)
+    mismatch | Just vis <- tcEqTypeVis act_ty exp_ty
+             = not vis
+             | otherwise
+             = False
+
 mkExpectedActualMsg :: Type -> Type -> CtOrigin -> Maybe TypeOrKind -> Bool
                     -> (Bool, Maybe SwapFlag, SDoc)
 -- NotSwapped means (actual, expected), IsSwapped is the reverse
 -- First return val is whether or not to print a herald above this msg
-mkExpectedActualMsg ty1 ty2 (TypeEqOrigin { uo_actual = act
-                                          , uo_expected = exp
-                                          , uo_thing = maybe_thing })
+mkExpectedActualMsg ty1 ty2 ct@(TypeEqOrigin { uo_actual = act
+                                             , uo_expected = exp
+                                             , uo_thing = maybe_thing })
                     m_level printExpanded
   | KindLevel <- level, occurs_check_error       = (True, Nothing, empty)
   | isUnliftedTypeKind act, isLiftedTypeKind exp = (False, Nothing, msg2)
@@ -2014,7 +2027,8 @@ mkExpectedActualMsg ty1 ty2 (TypeEqOrigin { uo_actual = act
         -> msg5 th
 
       _ | not (act `pickyEqType` exp)
-        -> vcat [ text "Expected" <+> sort <> colon <+> ppr exp
+        -> pprWithExplicitKindsWhenMismatch ty1 ty2 ct $
+           vcat [ text "Expected" <+> sort <> colon <+> ppr exp
                 , text "  Actual" <+> sort <> colon <+> ppr act
                 , if printExpanded then expandedTys else empty ]
 
@@ -2036,21 +2050,21 @@ mkExpectedActualMsg ty1 ty2 (TypeEqOrigin { uo_actual = act
                        maybe_thing
                , quotes (pprWithTYPE act) ]
 
-    msg5 th = hang (text "Expected" <+> kind_desc <> comma)
+    msg5 th = pprWithExplicitKindsWhenMismatch ty1 ty2 ct $
+              hang (text "Expected" <+> kind_desc <> comma)
                  2 (text "but" <+> quotes th <+> text "has kind" <+>
                     quotes (ppr act))
       where
         kind_desc | tcIsConstraintKind exp = text "a constraint"
 
                     -- TYPE t0
-                  | Just (tc, [arg]) <- tcSplitTyConApp_maybe exp
-                  , tc `hasKey` tYPETyConKey
-                  , tcIsTyVarTy arg      = sdocWithDynFlags $ \dflags ->
-                                           if gopt Opt_PrintExplicitRuntimeReps dflags
-                                           then text "kind" <+> quotes (ppr exp)
-                                           else text "a type"
+                  | Just arg <- kindRep_maybe exp
+                  , tcIsTyVarTy arg = sdocWithDynFlags $ \dflags ->
+                                      if gopt Opt_PrintExplicitRuntimeReps dflags
+                                      then text "kind" <+> quotes (ppr exp)
+                                      else text "a type"
 
-                  | otherwise            = text "kind" <+> quotes (ppr exp)
+                  | otherwise       = text "kind" <+> quotes (ppr exp)
 
     num_args_msg = case level of
       KindLevel
@@ -2484,7 +2498,7 @@ mk_dict_err ctxt@(CEC {cec_encl = implics}) (ct, (matches, unifiers, unsafe_over
         mb_patsyn_prov :: Maybe SDoc
         mb_patsyn_prov
           | not lead_with_ambig
-          , ProvCtxtOrigin PSB{ psb_def = L _ pat } <- orig
+          , ProvCtxtOrigin PSB{ psb_def = (dL->L _ pat) } <- orig
           = Just (vcat [ text "In other words, a successful match on the pattern"
                        , nest 2 $ ppr pat
                        , text "does not provide the constraint" <+> pprParendType pred ])
@@ -2503,7 +2517,7 @@ mk_dict_err ctxt@(CEC {cec_encl = implics}) (ct, (matches, unifiers, unsafe_over
                , not (isTypeFamilyTyCon tc)
                = hang (text "GHC can't yet do polykinded")
                     2 (text "Typeable" <+>
-                       parens (ppr ty <+> dcolon <+> ppr (typeKind ty)))
+                       parens (ppr ty <+> dcolon <+> ppr (tcTypeKind ty)))
                | otherwise
                = empty
 
@@ -2613,7 +2627,7 @@ ctxtFixes has_ambig_tvs pred implics
 
 discardProvCtxtGivens :: CtOrigin -> [UserGiven] -> [UserGiven]
 discardProvCtxtGivens orig givens  -- See Note [discardProvCtxtGivens]
-  | ProvCtxtOrigin (PSB {psb_id = L _ name}) <- orig
+  | ProvCtxtOrigin (PSB {psb_id = (dL->L _ name)}) <- orig
   = filterOut (discard name) givens
   | otherwise
   = givens
@@ -2819,15 +2833,26 @@ Re-flattening is pretty easy, because we don't need to keep track of
 evidence.  We don't re-use the code in TcCanonical because that's in
 the TcS monad, and we are in TcM here.
 
-Note [Suggest -fprint-explicit-kinds]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Note [Kind arguments in error messages]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 It can be terribly confusing to get an error message like (Trac #9171)
+
     Couldn't match expected type ‘GetParam Base (GetParam Base Int)’
                 with actual type ‘GetParam Base (GetParam Base Int)’
+
 The reason may be that the kinds don't match up.  Typically you'll get
 more useful information, but not when it's as a result of ambiguity.
-This test suggests -fprint-explicit-kinds when all the ambiguous type
-variables are kind variables.
+
+To mitigate this, GHC attempts to enable the -fprint-explicit-kinds flag
+whenever any error message arises due to a kind mismatch. This means that
+the above error message would instead be displayed as:
+
+    Couldn't match expected type
+                  ‘GetParam @* @k2 @* Base (GetParam @* @* @k2 Base Int)’
+                with actual type
+                  ‘GetParam @* @k20 @* Base (GetParam @* @* @k20 Base Int)’
+
+Which makes it clearer that the culprit is the mismatch between `k2` and `k20`.
 -}
 
 mkAmbigMsg :: Bool -- True when message has to be at beginning of sentence
@@ -2847,10 +2872,8 @@ mkAmbigMsg prepend_msg ct
         | not (null ambig_tvs)
         = pp_ambig (text "type") ambig_tvs
 
-        | otherwise  -- All ambiguous kind variabes; suggest -fprint-explicit-kinds
-                     -- See Note [Suggest -fprint-explicit-kinds]
-        = vcat [ pp_ambig (text "kind") ambig_kvs
-               , ppSuggestExplicitKinds ]
+        | otherwise
+        = pp_ambig (text "kind") ambig_kvs
 
     pp_ambig what tkvs
       | prepend_msg -- "Ambiguous type variable 't0'"

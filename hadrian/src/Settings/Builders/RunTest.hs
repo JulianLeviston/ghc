@@ -81,6 +81,7 @@ runTestBuilderArgs = builder RunTest ? do
     top         <- expr $ topDirectory
     ghcFlags    <- expr runTestGhcFlags
     timeoutProg <- expr buildRoot <&> (-/- timeoutPath)
+    integerLib  <- expr (integerLibrary flav)
 
     let asZeroOne s b = s ++ zeroOne b
 
@@ -110,6 +111,7 @@ runTestBuilderArgs = builder RunTest ? do
 
             , arg "-e", arg $ "config.ghc_dynamic_by_default=" ++ show hasDynamicByDefault
             , arg "-e", arg $ "config.ghc_dynamic=" ++ show hasDynamic
+            , arg "-e", arg $ "config.integer_backend=" ++ show (pkgName integerLib)
 
             -- Use default value, see:
             -- https://github.com/ghc/ghc/blob/master/testsuite/mk/boilerplate.mk
@@ -129,14 +131,14 @@ runTestBuilderArgs = builder RunTest ? do
 -- | Command line arguments for running GHC's test script.
 getTestArgs :: Args
 getTestArgs = do
+    -- targets specified in the TEST env var
+    testEnvTargets <- maybe [] words <$> expr (liftIO $ lookupEnv "TEST")
     args            <- expr $ userSetting defaultTestArgs
     bindir          <- expr $ setBinaryDirectory (testCompiler args)
     compiler        <- expr $ setCompiler (testCompiler args)
     globalVerbosity <- shakeVerbosity <$> expr getShakeOptions
     let configFileArg= ["--config-file=" ++ (testConfigFile args)]
-        testOnlyArg  = case testOnly args of
-                           Just cases -> map ("--only=" ++) (words cases)
-                           Nothing -> []
+        testOnlyArg  =  map ("--only=" ++) (testOnly args ++ testEnvTargets)
         onlyPerfArg  = if testOnlyPerf args
                            then Just "--only-perf-tests"
                            else Nothing

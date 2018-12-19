@@ -187,8 +187,8 @@ newFamInst flavor axiom@(CoAxiom { co_ax_tc = fam_tc })
                          , fi_rhs      = rhs'
                          , fi_axiom    = axiom }) }
   where
-    lhs_kind = typeKind (mkTyConApp fam_tc lhs)
-    rhs_kind = typeKind rhs
+    lhs_kind = tcTypeKind (mkTyConApp fam_tc lhs)
+    rhs_kind = tcTypeKind rhs
     tcv_set  = mkVarSet (tvs ++ cvs)
     pp_ax    = pprCoAxiom axiom
     CoAxBranch { cab_tvs = tvs
@@ -696,14 +696,13 @@ environments (one for the EPS and one for the HPT).
 checkForConflicts :: FamInstEnvs -> FamInst -> TcM Bool
 checkForConflicts inst_envs fam_inst
   = do { let conflicts = lookupFamInstEnvConflicts inst_envs fam_inst
-             no_conflicts = null conflicts
        ; traceTc "checkForConflicts" $
          vcat [ ppr (map fim_instance conflicts)
               , ppr fam_inst
               -- , ppr inst_envs
          ]
-       ; unless no_conflicts $ conflictInstErr fam_inst conflicts
-       ; return no_conflicts }
+       ; reportConflictInstErr fam_inst conflicts
+       ; return (null conflicts) }
 
 -- | Check whether a new open type family equation can be added without
 -- violating injectivity annotation supplied by the user. Returns True when
@@ -739,9 +738,9 @@ makeInjectivityErrors fi_ax axiom inj conflicts
   = ASSERT2( any id inj, text "No injective type variables" )
     let lhs             = coAxBranchLHS axiom
         rhs             = coAxBranchRHS axiom
-
+        fam_tc          = coAxiomTyCon fi_ax
         are_conflicts   = not $ null conflicts
-        unused_inj_tvs  = unusedInjTvsInRHS (coAxiomTyCon fi_ax) inj lhs rhs
+        unused_inj_tvs  = unusedInjTvsInRHS fam_tc inj lhs rhs
         inj_tvs_unused  = not $ and (isEmptyVarSet <$> unused_inj_tvs)
         tf_headed       = isTFHeaded rhs
         bare_variables  = bareTvInRHSViolated lhs rhs
@@ -749,7 +748,7 @@ makeInjectivityErrors fi_ax axiom inj conflicts
 
         err_builder herald eqns
                         = ( hang herald
-                               2 (vcat (map (pprCoAxBranch fi_ax) eqns))
+                               2 (vcat (map (pprCoAxBranchUser fam_tc) eqns))
                           , coAxBranchSpan (head eqns) )
         errorIf p f     = if p then [f err_builder axiom] else []
      in    errorIf are_conflicts  (conflictInjInstErr     conflicts     )
@@ -850,16 +849,6 @@ bareTvInRHSViolated pats rhs | isTyVarTy rhs
 bareTvInRHSViolated _ _ = []
 
 
-conflictInstErr :: FamInst -> [FamInstMatch] -> TcRn ()
-conflictInstErr fam_inst conflictingMatch
-  | (FamInstMatch { fim_instance = confInst }) : _ <- conflictingMatch
-  = let (err, span) = makeFamInstsErr
-                            (text "Conflicting family instance declarations:")
-                            [fam_inst, confInst]
-    in setSrcSpan span $ addErr err
-  | otherwise
-  = panic "conflictInstErr"
-
 -- | Type of functions that use error message and a list of axioms to build full
 -- error message (with a source location) for injective type families.
 type InjErrorBuilder = SDoc -> [CoAxBranch] -> (SDoc, SrcSpan)
@@ -894,8 +883,9 @@ conflictInjInstErr conflictingEqns errorBuilder tyfamEqn
 unusedInjectiveVarsErr :: Pair TyVarSet -> InjErrorBuilder -> CoAxBranch
                        -> (SDoc, SrcSpan)
 unusedInjectiveVarsErr (Pair invis_vars vis_vars) errorBuilder tyfamEqn
-  = errorBuilder (injectivityErrorHerald True $$ msg)
-                 [tyfamEqn]
+  = let (doc, loc) = errorBuilder (injectivityErrorHerald True $$ msg)
+                                  [tyfamEqn]
+    in (pprWithExplicitKindsWhen has_kinds doc, loc)
     where
       tvs = invis_vars `unionVarSet` vis_vars
       has_types = not $ isEmptyVarSet vis_vars
@@ -909,9 +899,7 @@ unusedInjectiveVarsErr (Pair invis_vars vis_vars) errorBuilder tyfamEqn
                (True, False)  -> text "Type"
                (False, True)  -> text "Kind"
                (False, False) -> pprPanic "mkUnusedInjectiveVarsErr" $ ppr tvs
-      print_kinds_info = ppWhen has_kinds ppSuggestExplicitKinds
-      msg = doc $$ print_kinds_info $$
-            text "In the type family equation:"
+      msg = doc $$ text "In the type family equation:"
 
 -- | Build error message for equation that has a type family call at the top
 -- level of RHS
@@ -934,18 +922,21 @@ bareVariableInRHSErr tys errorBuilder famInst
                   text "variables:" <+> pprQuotedList tys) [famInst]
 
 
-makeFamInstsErr :: SDoc -> [FamInst] -> (SDoc, SrcSpan)
-makeFamInstsErr herald insts
-  = ASSERT( not (null insts) )
-    ( hang herald
-         2 (vcat [ pprCoAxBranchHdr (famInstAxiom fi) 0
-                 | fi <- sorted ])
-    , srcSpan )
+reportConflictInstErr :: FamInst -> [FamInstMatch] -> TcRn ()
+reportConflictInstErr _ []
+  = return ()  -- No conflicts
+reportConflictInstErr fam_inst (match1 : _)
+  | FamInstMatch { fim_instance = conf_inst } <- match1
+  , let sorted  = sortWith getSpan [fam_inst, conf_inst]
+        fi1     = head sorted
+        span    = coAxBranchSpan (coAxiomSingleBranch (famInstAxiom fi1))
+  = setSrcSpan span $ addErr $
+    hang (text "Conflicting family instance declarations:")
+       2 (vcat [ pprCoAxBranchUser (coAxiomTyCon ax) (coAxiomSingleBranch ax)
+               | fi <- sorted
+               , let ax = famInstAxiom fi ])
  where
    getSpan = getSrcLoc . famInstAxiom
-   sorted  = sortWith getSpan insts
-   fi1     = head sorted
-   srcSpan = coAxBranchSpan (coAxiomSingleBranch (famInstAxiom fi1))
    -- The sortWith just arranges that instances are dislayed in order
    -- of source location, which reduced wobbling in error messages,
    -- and is better for users

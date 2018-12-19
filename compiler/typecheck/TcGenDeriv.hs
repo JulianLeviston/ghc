@@ -62,7 +62,8 @@ import SrcLoc
 import TyCon
 import TcEnv
 import TcType
-import TcValidity ( checkValidTyFamEqn )
+import TcValidity ( checkValidCoAxBranch )
+import CoAxiom    ( coAxiomSingleBranch )
 import TysPrim
 import TysWiredIn
 import Type
@@ -1452,12 +1453,15 @@ gfoldl_RDR, gunfold_RDR, toConstr_RDR, dataTypeOf_RDR, mkConstr_RDR,
     eqChar_RDR  , ltChar_RDR  , geChar_RDR  , gtChar_RDR  , leChar_RDR  ,
     eqInt_RDR   , ltInt_RDR   , geInt_RDR   , gtInt_RDR   , leInt_RDR   ,
     eqInt8_RDR  , ltInt8_RDR  , geInt8_RDR  , gtInt8_RDR  , leInt8_RDR  ,
+    eqInt16_RDR , ltInt16_RDR , geInt16_RDR , gtInt16_RDR , leInt16_RDR ,
     eqWord_RDR  , ltWord_RDR  , geWord_RDR  , gtWord_RDR  , leWord_RDR  ,
     eqWord8_RDR , ltWord8_RDR , geWord8_RDR , gtWord8_RDR , leWord8_RDR ,
+    eqWord16_RDR, ltWord16_RDR, geWord16_RDR, gtWord16_RDR, leWord16_RDR,
     eqAddr_RDR  , ltAddr_RDR  , geAddr_RDR  , gtAddr_RDR  , leAddr_RDR  ,
     eqFloat_RDR , ltFloat_RDR , geFloat_RDR , gtFloat_RDR , leFloat_RDR ,
     eqDouble_RDR, ltDouble_RDR, geDouble_RDR, gtDouble_RDR, leDouble_RDR,
-    extendWord8_RDR, extendInt8_RDR :: RdrName
+    extendWord8_RDR, extendInt8_RDR,
+    extendWord16_RDR, extendInt16_RDR :: RdrName
 gfoldl_RDR     = varQual_RDR  gENERICS (fsLit "gfoldl")
 gunfold_RDR    = varQual_RDR  gENERICS (fsLit "gunfold")
 toConstr_RDR   = varQual_RDR  gENERICS (fsLit "toConstr")
@@ -1492,17 +1496,29 @@ leInt8_RDR     = varQual_RDR  gHC_PRIM (fsLit "leInt8#")
 gtInt8_RDR     = varQual_RDR  gHC_PRIM (fsLit "gtInt8#" )
 geInt8_RDR     = varQual_RDR  gHC_PRIM (fsLit "geInt8#")
 
+eqInt16_RDR    = varQual_RDR  gHC_PRIM (fsLit "eqInt16#")
+ltInt16_RDR    = varQual_RDR  gHC_PRIM (fsLit "ltInt16#" )
+leInt16_RDR    = varQual_RDR  gHC_PRIM (fsLit "leInt16#")
+gtInt16_RDR    = varQual_RDR  gHC_PRIM (fsLit "gtInt16#" )
+geInt16_RDR    = varQual_RDR  gHC_PRIM (fsLit "geInt16#")
+
 eqWord_RDR     = varQual_RDR  gHC_PRIM (fsLit "eqWord#")
 ltWord_RDR     = varQual_RDR  gHC_PRIM (fsLit "ltWord#")
 leWord_RDR     = varQual_RDR  gHC_PRIM (fsLit "leWord#")
 gtWord_RDR     = varQual_RDR  gHC_PRIM (fsLit "gtWord#")
 geWord_RDR     = varQual_RDR  gHC_PRIM (fsLit "geWord#")
 
-eqWord8_RDR     = varQual_RDR  gHC_PRIM (fsLit "eqWord8#")
-ltWord8_RDR     = varQual_RDR  gHC_PRIM (fsLit "ltWord8#" )
-leWord8_RDR     = varQual_RDR  gHC_PRIM (fsLit "leWord8#")
-gtWord8_RDR     = varQual_RDR  gHC_PRIM (fsLit "gtWord8#" )
-geWord8_RDR     = varQual_RDR  gHC_PRIM (fsLit "geWord8#")
+eqWord8_RDR    = varQual_RDR  gHC_PRIM (fsLit "eqWord8#")
+ltWord8_RDR    = varQual_RDR  gHC_PRIM (fsLit "ltWord8#" )
+leWord8_RDR    = varQual_RDR  gHC_PRIM (fsLit "leWord8#")
+gtWord8_RDR    = varQual_RDR  gHC_PRIM (fsLit "gtWord8#" )
+geWord8_RDR    = varQual_RDR  gHC_PRIM (fsLit "geWord8#")
+
+eqWord16_RDR   = varQual_RDR  gHC_PRIM (fsLit "eqWord16#")
+ltWord16_RDR   = varQual_RDR  gHC_PRIM (fsLit "ltWord16#" )
+leWord16_RDR   = varQual_RDR  gHC_PRIM (fsLit "leWord16#")
+gtWord16_RDR   = varQual_RDR  gHC_PRIM (fsLit "gtWord16#" )
+geWord16_RDR   = varQual_RDR  gHC_PRIM (fsLit "geWord16#")
 
 eqAddr_RDR     = varQual_RDR  gHC_PRIM (fsLit "eqAddr#")
 ltAddr_RDR     = varQual_RDR  gHC_PRIM (fsLit "ltAddr#")
@@ -1524,6 +1540,9 @@ geDouble_RDR   = varQual_RDR  gHC_PRIM (fsLit ">=##")
 
 extendWord8_RDR = varQual_RDR  gHC_PRIM (fsLit "extendWord8#")
 extendInt8_RDR  = varQual_RDR  gHC_PRIM (fsLit "extendInt8#")
+
+extendWord16_RDR = varQual_RDR  gHC_PRIM (fsLit "extendWord16#")
+extendInt16_RDR  = varQual_RDR  gHC_PRIM (fsLit "extendInt16#")
 
 
 {-
@@ -1849,11 +1868,10 @@ gen_Newtype_binds loc cls inst_tvs inst_tys rhs_ty
     mk_atf_inst fam_tc = do
         rep_tc_name <- newFamInstTyConName (L loc (tyConName fam_tc))
                                            rep_lhs_tys
-        let axiom = mkSingleCoAxiom Nominal rep_tc_name rep_tvs' rep_cvs'
+        let axiom = mkSingleCoAxiom Nominal rep_tc_name rep_tvs' [] rep_cvs'
                                     fam_tc rep_lhs_tys rep_rhs_ty
         -- Check (c) from Note [GND and associated type families] in TcDeriv
-        checkValidTyFamEqn (Just (cls, cls_tvs, lhs_env)) fam_tc rep_tvs'
-                           rep_cvs' rep_lhs_tys rep_rhs_ty pp_lhs loc
+        checkValidCoAxBranch fam_tc (coAxiomSingleBranch axiom)
         newFamInst SynFamilyInst axiom
       where
         cls_tvs     = classTyVars cls
@@ -1870,7 +1888,6 @@ gen_Newtype_binds loc cls inst_tvs inst_tys rhs_ty
         (rep_tvs, rep_cvs) = partition isTyVar rep_tcvs
         rep_tvs'    = scopedSort rep_tvs
         rep_cvs'    = scopedSort rep_cvs
-        pp_lhs      = ppr (mkTyConApp fam_tc rep_lhs_tys)
 
     -- Same as inst_tys, but with the last argument type replaced by the
     -- representation type.
@@ -2130,14 +2147,26 @@ primLitOps str ty = (assoc_ty_id str litConTbl ty, \v -> boxed v)
 
 ordOpTbl :: [(Type, (RdrName, RdrName, RdrName, RdrName, RdrName))]
 ordOpTbl
- =  [(charPrimTy  , (ltChar_RDR  , leChar_RDR  , eqChar_RDR  , geChar_RDR  , gtChar_RDR  ))
-    ,(intPrimTy   , (ltInt_RDR   , leInt_RDR   , eqInt_RDR   , geInt_RDR   , gtInt_RDR   ))
-    ,(int8PrimTy  , (ltInt8_RDR  , leInt8_RDR  , eqInt8_RDR  , geInt8_RDR  , gtInt8_RDR   ))
-    ,(wordPrimTy  , (ltWord_RDR  , leWord_RDR  , eqWord_RDR  , geWord_RDR  , gtWord_RDR  ))
-    ,(word8PrimTy , (ltWord8_RDR , leWord8_RDR , eqWord8_RDR , geWord8_RDR , gtWord8_RDR   ))
-    ,(addrPrimTy  , (ltAddr_RDR  , leAddr_RDR  , eqAddr_RDR  , geAddr_RDR  , gtAddr_RDR  ))
-    ,(floatPrimTy , (ltFloat_RDR , leFloat_RDR , eqFloat_RDR , geFloat_RDR , gtFloat_RDR ))
-    ,(doublePrimTy, (ltDouble_RDR, leDouble_RDR, eqDouble_RDR, geDouble_RDR, gtDouble_RDR)) ]
+ =  [(charPrimTy  , (ltChar_RDR  , leChar_RDR
+     , eqChar_RDR  , geChar_RDR  , gtChar_RDR  ))
+    ,(intPrimTy   , (ltInt_RDR   , leInt_RDR
+     , eqInt_RDR   , geInt_RDR   , gtInt_RDR   ))
+    ,(int8PrimTy  , (ltInt8_RDR  , leInt8_RDR
+     , eqInt8_RDR  , geInt8_RDR  , gtInt8_RDR   ))
+    ,(int16PrimTy , (ltInt16_RDR , leInt16_RDR
+     , eqInt16_RDR , geInt16_RDR , gtInt16_RDR   ))
+    ,(wordPrimTy  , (ltWord_RDR  , leWord_RDR
+     , eqWord_RDR  , geWord_RDR  , gtWord_RDR  ))
+    ,(word8PrimTy , (ltWord8_RDR , leWord8_RDR
+     , eqWord8_RDR , geWord8_RDR , gtWord8_RDR   ))
+    ,(word16PrimTy, (ltWord16_RDR, leWord16_RDR
+     , eqWord16_RDR, geWord16_RDR, gtWord16_RDR  ))
+    ,(addrPrimTy  , (ltAddr_RDR  , leAddr_RDR
+     , eqAddr_RDR  , geAddr_RDR  , gtAddr_RDR  ))
+    ,(floatPrimTy , (ltFloat_RDR , leFloat_RDR
+     , eqFloat_RDR , geFloat_RDR , gtFloat_RDR ))
+    ,(doublePrimTy, (ltDouble_RDR, leDouble_RDR
+     , eqDouble_RDR, geDouble_RDR, gtDouble_RDR)) ]
 
 -- A mapping from a primitive type to a function that constructs its boxed
 -- version.
@@ -2155,6 +2184,12 @@ boxConTbl =
     , (word8PrimTy,
         nlHsApp (nlHsVar $ getRdrName wordDataCon)
         .  nlHsApp (nlHsVar extendWord8_RDR))
+    , (int16PrimTy,
+        nlHsApp (nlHsVar $ getRdrName intDataCon)
+        . nlHsApp (nlHsVar extendInt16_RDR))
+    , (word16PrimTy,
+        nlHsApp (nlHsVar $ getRdrName wordDataCon)
+        .  nlHsApp (nlHsVar extendWord16_RDR))
     ]
 
 
@@ -2168,12 +2203,16 @@ postfixModTbl
     ,(doublePrimTy, "##")
     ,(int8PrimTy, "#")
     ,(word8PrimTy, "##")
+    ,(int16PrimTy, "#")
+    ,(word16PrimTy, "##")
     ]
 
 primConvTbl :: [(Type, String)]
 primConvTbl =
     [ (int8PrimTy, "narrowInt8#")
     , (word8PrimTy, "narrowWord8#")
+    , (int16PrimTy, "narrowInt16#")
+    , (word16PrimTy, "narrowWord16#")
     ]
 
 litConTbl :: [(Type, LHsExpr GhcPs -> LHsExpr GhcPs)]

@@ -150,7 +150,7 @@ toIfaceTypeX fr (TyConApp tc tys)
     -- tuples
   | Just sort <- tyConTuple_maybe tc
   , n_tys == arity
-  = IfaceTupleTy sort IsNotPromoted (toIfaceTcArgsX fr tc tys)
+  = IfaceTupleTy sort NotPromoted (toIfaceTcArgsX fr tc tys)
 
   | Just dc <- isPromotedDataCon_maybe tc
   , isTupleDataCon dc
@@ -159,7 +159,7 @@ toIfaceTypeX fr (TyConApp tc tys)
 
   | tc `elem` [ eqPrimTyCon, eqReprPrimTyCon, heqTyCon ]
   , (k1:k2:_) <- tys
-  = let info = IfaceTyConInfo IsNotPromoted sort
+  = let info = IfaceTyConInfo NotPromoted sort
         sort | k1 `eqType` k2 = IfaceEqualityTyCon
              | otherwise      = IfaceNormalTyCon
     in IfaceTyConApp (IfaceTyCon (tyConName tc) info) (toIfaceTcArgsX fr tc tys)
@@ -191,7 +191,7 @@ toIfaceTyCon tc
     tc_name = tyConName tc
     info    = IfaceTyConInfo promoted sort
     promoted | isPromotedDataCon tc = IsPromoted
-             | otherwise            = IsNotPromoted
+             | otherwise            = NotPromoted
 
     tupleSort :: TyCon -> Maybe IfaceTyConSort
     tupleSort tc' =
@@ -217,7 +217,7 @@ toIfaceTyCon tc
 
 toIfaceTyCon_name :: Name -> IfaceTyCon
 toIfaceTyCon_name n = IfaceTyCon n info
-  where info = IfaceTyConInfo IsNotPromoted IfaceNormalTyCon
+  where info = IfaceTyConInfo NotPromoted IfaceNormalTyCon
   -- Used for the "rough-match" tycon stuff,
   -- where pretty-printing is not an issue
 
@@ -305,14 +305,13 @@ toIfaceAppArgsX fr kind ty_args
       | Just ty' <- coreView ty
       = go env ty' ts
     go env (ForAllTy (Bndr tv vis) res) (t:ts)
-      | isVisibleArgFlag vis = IA_Vis   t' ts'
-      | otherwise            = IA_Invis t' ts'
+      = IA_Arg t' vis ts'
       where
         t'  = toIfaceTypeX fr t
         ts' = go (extendTCvSubst env tv t) res ts
 
     go env (FunTy _ res) (t:ts) -- No type-class args in tycon apps
-      = IA_Vis (toIfaceTypeX fr t) (go env res ts)
+      = IA_Arg (toIfaceTypeX fr t) Required (go env res ts)
 
     go env ty ts@(t1:ts1)
       | not (isEmptyTCvSubst env)
@@ -326,7 +325,7 @@ toIfaceAppArgsX fr kind ty_args
         -- carry on as if it were FunTy.  Without the test for
         -- isEmptyTCvSubst we'd get an infinite loop (Trac #15473)
         WARN( True, ppr kind $$ ppr ty_args )
-        IA_Vis (toIfaceTypeX fr t1) (go env ty ts1)
+        IA_Arg (toIfaceTypeX fr t1) Required (go env ty ts1)
 
 tidyToIfaceType :: TidyEnv -> Type -> IfaceType
 tidyToIfaceType env ty = toIfaceType (tidyType env ty)

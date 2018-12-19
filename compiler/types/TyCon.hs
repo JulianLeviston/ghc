@@ -137,7 +137,8 @@ import {-# SOURCE #-} TysWiredIn ( runtimeRepTyCon, constraintKind
                                  , vecCountTyCon, vecElemTyCon, liftedTypeKind
                                  , mkFunKind, mkForAllKind )
 import {-# SOURCE #-} DataCon    ( DataCon, dataConExTyCoVars, dataConFieldLabels
-                                 , dataConTyCon, dataConFullSig )
+                                 , dataConTyCon, dataConFullSig
+                                 , isUnboxedSumCon )
 
 import Binary
 import Var
@@ -159,7 +160,6 @@ import Util
 import Unique( tyConRepNameUnique, dataConTyRepNameUnique )
 import UniqSet
 import Module
-import {-# SOURCE #-} DataCon
 
 import qualified Data.Data as Data
 
@@ -564,7 +564,7 @@ They fit together like so:
   Note that that are three binders here, including the
   kind variable k.
 
-- See Note [VarBndrs, TyCoVarBinders, TyConBinders, and visibility] in TyCoRep
+* See Note [VarBndrs, TyCoVarBinders, TyConBinders, and visibility] in TyCoRep
   for what the visibility flag means.
 
 * Each TyConBinder tyConBinders has a TyVar (sometimes it is TyCoVar), and
@@ -584,10 +584,15 @@ They fit together like so:
 
   tyConKind is the full kind of the TyCon, not just the result kind
 
-* tyConArity is the arguments this TyCon must be applied to, to be
-  considered saturated.  Here we mean "applied to in the actual Type",
-  not surface syntax; i.e. including implicit kind variables.
-  So it's just (length tyConBinders)
+* For type families, tyConArity is the arguments this TyCon must be
+  applied to, to be considered saturated.  Here we mean "applied to in
+  the actual Type", not surface syntax; i.e. including implicit kind
+  variables.  So it's just (length tyConBinders)
+
+* For an algebraic data type, or data instance, the tyConResKind is
+  always (TYPE r); that is, the tyConBinders are enough to saturate
+  the type constructor.  I'm not quite sure why we have this invariant,
+  but it's enforced by etaExpandAlgTyCon
 -}
 
 instance Outputable tv => Outputable (VarBndr tv TyConBndrVis) where
@@ -1326,10 +1331,12 @@ data PrimRep
   | LiftedRep
   | UnliftedRep   -- ^ Unlifted pointer
   | Int8Rep       -- ^ Signed, 8-bit value
+  | Int16Rep      -- ^ Signed, 16-bit value
   | IntRep        -- ^ Signed, word-sized value
   | WordRep       -- ^ Unsigned, word-sized value
   | Int64Rep      -- ^ Signed, 64 bit value (with 32-bit words only)
   | Word8Rep      -- ^ Unsigned, 8 bit value
+  | Word16Rep      -- ^ Unsigned, 16 bit value
   | Word64Rep     -- ^ Unsigned, 64 bit value (with 32-bit words only)
   | AddrRep       -- ^ A pointer, but /not/ to a Haskell value (use '(Un)liftedRep')
   | FloatRep
@@ -1376,8 +1383,10 @@ primRepSizeB :: DynFlags -> PrimRep -> Int
 primRepSizeB dflags IntRep           = wORD_SIZE dflags
 primRepSizeB dflags WordRep          = wORD_SIZE dflags
 primRepSizeB _      Int8Rep          = 1
+primRepSizeB _      Int16Rep         = 2
 primRepSizeB _      Int64Rep         = wORD64_SIZE
 primRepSizeB _      Word8Rep         = 1
+primRepSizeB _      Word16Rep        = 2
 primRepSizeB _      Word64Rep        = wORD64_SIZE
 primRepSizeB _      FloatRep         = fLOAT_SIZE
 primRepSizeB dflags DoubleRep        = dOUBLE_SIZE dflags

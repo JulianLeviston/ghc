@@ -46,7 +46,7 @@ data TestArgs = TestArgs
     , testConfigFile :: String
     , testConfigs    :: [String]
     , testJUnit      :: Maybe FilePath
-    , testOnly       :: Maybe String
+    , testOnly       :: [String]
     , testOnlyPerf   :: Bool
     , testSkipPerf   :: Bool
     , testSpeed      :: TestSpeed
@@ -62,7 +62,7 @@ defaultTestArgs = TestArgs
     , testConfigFile = "testsuite/config/ghc"
     , testConfigs    = []
     , testJUnit      = Nothing
-    , testOnly       = Nothing
+    , testOnly       = []
     , testOnlyPerf   = False
     , testSkipPerf   = False
     , testSpeed      = Fast
@@ -142,7 +142,10 @@ readTestJUnit :: Maybe String -> Either String (CommandLineArgs -> CommandLineAr
 readTestJUnit filepath = Right $ \flags -> flags { testArgs = (testArgs flags) { testJUnit = filepath } }
 
 readTestOnly :: Maybe String -> Either String (CommandLineArgs -> CommandLineArgs)
-readTestOnly tests = Right $ \flags -> flags { testArgs = (testArgs flags) { testOnly = tests } }
+readTestOnly tests = Right $ \flags ->
+  flags { testArgs = (testArgs flags) { testOnly = tests' } }
+
+  where tests' = maybe [] words tests
 
 readTestOnlyPerf :: Either String (CommandLineArgs -> CommandLineArgs)
 readTestOnlyPerf = Right $ \flags -> flags { testArgs = (testArgs flags) { testOnlyPerf = True } }
@@ -198,7 +201,7 @@ optDescrs =
     , Option [] ["test-compiler"] (OptArg readTestCompiler "TEST_COMPILER")
       "Use given compiler [Default=stage2]."
     , Option [] ["test-config-file"] (OptArg readTestConfigFile "CONFIG_FILE")
-      "congiguration file for testsuite. Default=testsuite/config/ghc"
+      "configuration file for testsuite. Default=testsuite/config/ghc"
     , Option [] ["config"] (OptArg readTestConfig "EXTRA_TEST_CONFIG")
       "Configurations to run test, in key=value format."
     , Option [] ["summary-junit"] (OptArg readTestJUnit "TEST_SUMMARY_JUNIT")

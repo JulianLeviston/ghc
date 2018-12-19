@@ -426,6 +426,88 @@ primop Word8LtOp "ltWord8#" Compare Word8# -> Word8# -> Int#
 primop Word8NeOp "neWord8#" Compare Word8# -> Word8# -> Int#
 
 ------------------------------------------------------------------------
+section "Int16#"
+        {Operations on 16-bit integers.}
+------------------------------------------------------------------------
+
+primtype Int16#
+
+primop Int16Extend "extendInt16#" GenPrimOp Int16# -> Int#
+primop Int16Narrow "narrowInt16#" GenPrimOp Int# -> Int16#
+
+primop Int16NegOp "negateInt16#" Monadic Int16# -> Int16#
+
+primop Int16AddOp "plusInt16#" Dyadic Int16# -> Int16# -> Int16#
+  with
+    commutable = True
+
+primop Int16SubOp "subInt16#" Dyadic Int16# -> Int16# -> Int16#
+
+primop Int16MulOp "timesInt16#" Dyadic Int16# -> Int16# -> Int16#
+  with
+    commutable = True
+
+primop Int16QuotOp "quotInt16#" Dyadic Int16# -> Int16# -> Int16#
+  with
+    can_fail = True
+
+primop Int16RemOp "remInt16#" Dyadic Int16# -> Int16# -> Int16#
+  with
+    can_fail = True
+
+primop Int16QuotRemOp "quotRemInt16#" GenPrimOp Int16# -> Int16# -> (# Int16#, Int16# #)
+  with
+    can_fail = True
+
+primop Int16EqOp "eqInt16#" Compare Int16# -> Int16# -> Int#
+primop Int16GeOp "geInt16#" Compare Int16# -> Int16# -> Int#
+primop Int16GtOp "gtInt16#" Compare Int16# -> Int16# -> Int#
+primop Int16LeOp "leInt16#" Compare Int16# -> Int16# -> Int#
+primop Int16LtOp "ltInt16#" Compare Int16# -> Int16# -> Int#
+primop Int16NeOp "neInt16#" Compare Int16# -> Int16# -> Int#
+
+------------------------------------------------------------------------
+section "Word16#"
+        {Operations on 16-bit unsigned integers.}
+------------------------------------------------------------------------
+
+primtype Word16#
+
+primop Word16Extend "extendWord16#" GenPrimOp Word16# -> Word#
+primop Word16Narrow "narrowWord16#" GenPrimOp Word# -> Word16#
+
+primop Word16NotOp "notWord16#" Monadic Word16# -> Word16#
+
+primop Word16AddOp "plusWord16#" Dyadic Word16# -> Word16# -> Word16#
+  with
+    commutable = True
+
+primop Word16SubOp "subWord16#" Dyadic Word16# -> Word16# -> Word16#
+
+primop Word16MulOp "timesWord16#" Dyadic Word16# -> Word16# -> Word16#
+  with
+    commutable = True
+
+primop Word16QuotOp "quotWord16#" Dyadic Word16# -> Word16# -> Word16#
+  with
+    can_fail = True
+
+primop Word16RemOp "remWord16#" Dyadic Word16# -> Word16# -> Word16#
+  with
+    can_fail = True
+
+primop Word16QuotRemOp "quotRemWord16#" GenPrimOp Word16# -> Word16# -> (# Word16#, Word16# #)
+  with
+    can_fail = True
+
+primop Word16EqOp "eqWord16#" Compare Word16# -> Word16# -> Int#
+primop Word16GeOp "geWord16#" Compare Word16# -> Word16# -> Int#
+primop Word16GtOp "gtWord16#" Compare Word16# -> Word16# -> Int#
+primop Word16LeOp "leWord16#" Compare Word16# -> Word16# -> Int#
+primop Word16LtOp "ltWord16#" Compare Word16# -> Word16# -> Int#
+primop Word16NeOp "neWord16#" Compare Word16# -> Word16# -> Int#
+
+------------------------------------------------------------------------
 section "Word#"
         {Operations on native-sized unsigned words (32+ bits).}
 ------------------------------------------------------------------------
@@ -3068,64 +3150,11 @@ section "Tag to enum stuff"
 primop  DataToTagOp "dataToTag#" GenPrimOp
    a -> Int#  -- Zero-indexed; the first constructor has tag zero
    with
-   can_fail   = True -- See Note [dataToTag#]
    strictness = { \ _arity -> mkClosedStrictSig [evalDmd] topRes }
+   -- See Note [dataToTag# magic] in PrelRules
 
 primop  TagToEnumOp "tagToEnum#" GenPrimOp
    Int# -> a
-
--- Note [dataToTag#]
--- ~~~~~~~~~~~~~~~~~
--- The primop dataToTag# is unusual because it evaluates its argument.
--- Only `SeqOp` shares that property.  (Other primops do not do anything
--- as fancy as argument evaluation.)  The special handling for dataToTag#
--- is:
---
--- * CoreUtils.exprOkForSpeculation has a special case for DataToTagOp,
---   (actually in app_ok).  Most primops with lifted arguments do not
---   evaluate those arguments, but DataToTagOp and SeqOp are two
---   exceptions.  We say that they are /never/ ok-for-speculation,
---   regardless of the evaluated-ness of their argument.
---   See CoreUtils Note [PrimOps that evaluate their arguments]
---
--- * There is a special case for DataToTagOp in StgCmmExpr.cgExpr,
---   that evaluates its argument and then extracts the tag from
---   the returned value.
---
--- * An application like (dataToTag# (Just x)) is optimised by
---   dataToTagRule in PrelRules.
---
--- * A case expression like
---      case (dataToTag# e) of <alts>
---   gets transformed t
---      case e of <transformed alts>
---   by PrelRules.caseRules; see Note [caseRules for dataToTag]
---
--- See Trac #15696 for a long saga.
---
--- Note [dataToTag# hack]
--- ~~~~~~~~~~~~~~~~~~~~~~
--- (This a temporary hack: see Trac #15696 commment:60.)
---
--- dataToTag# evaluates its argument, so we don't want to float it out.
--- Consider:
---
---     \z. case x of y -> let v = dataToTag# y in ...
---
--- To improve floating, the FloatOut pass (deliberately) does a
--- binder-swap on the case, to give
---
---     \z. case x of y -> let v = dataToTag# x in ...
---
--- Now FloatOut might float that v-binding outside the \z
---
---     let v = dataToTag# x in \z. case x of y -> ...
---
--- But that is bad because that might mean x gets evaluated much too early!
---
--- Solution: make dataToTag# into a can_fail primop.  That will stop it floating
--- (see Note [PrimOp can_fail and has_side_effects] in PrimOp).  It's a bit of
--- a hack but never mind.
 
 ------------------------------------------------------------------------
 section "Bytecode operations"

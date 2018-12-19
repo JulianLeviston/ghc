@@ -388,7 +388,7 @@ tcExpr expr@(OpApp fix arg1 op arg2) res_ty
        -- The *result* type can have any kind (Trac #8739),
        -- so we don't need to check anything for that
        ; _ <- unifyKind (Just (XHsType $ NHsCoreTy arg2_sigma))
-                        (typeKind arg2_sigma) liftedTypeKind
+                        (tcTypeKind arg2_sigma) liftedTypeKind
            -- ignore the evidence. arg2_sigma must have type * or #,
            -- because we know arg2_sigma -> or_res_ty is well-kinded
            -- (because otherwise matchActualFunTys would fail)
@@ -1331,8 +1331,9 @@ tcArgs fun orig_fun_ty fun_orig orig_args herald
            ; case tcSplitForAllTy_maybe upsilon_ty of
                Just (tvb, inner_ty)
                  | binderArgFlag tvb == Specified ->
-                   -- It really can't be Inferred, because we've just instantiated those
-                   -- But, oddly, it might just be Required. See #15859.
+                   -- It really can't be Inferred, because we've justn
+                   -- instantiated those. But, oddly, it might just be Required.
+                   -- See Note [Required quantifiers in the type of a term]
                  do { let tv   = binderVar tvb
                           kind = tyVarKind tv
                     ; ty_arg <- tcHsTypeApp hs_ty_arg kind
@@ -1346,7 +1347,7 @@ tcArgs fun orig_fun_ty fun_orig orig_args herald
                                       --     substitution is kind-respecting
                     ; traceTc "VTA" (vcat [ppr tv, debugPprType kind
                                           , debugPprType ty_arg
-                                          , debugPprType (typeKind ty_arg)
+                                          , debugPprType (tcTypeKind ty_arg)
                                           , debugPprType inner_ty
                                           , debugPprType insted_ty ])
 
@@ -1381,8 +1382,27 @@ tcArgs fun orig_fun_ty fun_orig orig_args herald
                text "Cannot apply expression of type" <+> quotes (ppr ty) $$
                text "to a visible type argument" <+> quotes (ppr arg) }
 
-{- Note [Visible type application zonk]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+{- Note [Required quantifiers in the type of a term]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Consider (Trac #15859)
+
+  data A k :: k -> Type      -- A      :: forall k -> k -> Type
+  type KindOf (a :: k) = k   -- KindOf :: forall k. k -> Type
+  a = (undefind :: KindOf A) @Int
+
+With ImpredicativeTypes (thin ice, I know), we instantiate
+KindOf at type (forall k -> k -> Type), so
+  KindOf A = forall k -> k -> Type
+whose first argument is Required
+
+We want to reject this type application to Int, but in earlier
+GHCs we had an ASSERT that Required could not occur here.
+
+The ice is thin; c.f. Note [No Required TyCoBinder in terms]
+in TyCoRep.
+
+Note [Visible type application zonk]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 * Substitutions should be kind-preserving, so we need kind(tv) = kind(ty_arg).
 
 * tcHsTypeApp only guarantees that
@@ -1438,7 +1458,8 @@ tcSyntaxOp :: CtOrigin
            -> ([TcSigmaType] -> TcM a) -- ^ Type check any arguments
            -> TcM (a, SyntaxExpr GhcTcId)
 -- ^ Typecheck a syntax operator
--- The operator is always a variable at this stage (i.e. renamer output)
+-- The operator is a variable or a lambda at this stage (i.e. renamer
+-- output)
 tcSyntaxOp orig expr arg_tys res_ty
   = tcSyntaxOpGen orig expr arg_tys (SynType res_ty)
 
@@ -1450,17 +1471,14 @@ tcSyntaxOpGen :: CtOrigin
               -> SyntaxOpType
               -> ([TcSigmaType] -> TcM a)
               -> TcM (a, SyntaxExpr GhcTcId)
-tcSyntaxOpGen orig (SyntaxExpr { syn_expr = HsVar _ (L _ op) })
-              arg_tys res_ty thing_inside
-  = do { (expr, sigma) <- tcInferId op
+tcSyntaxOpGen orig op arg_tys res_ty thing_inside
+  = do { (expr, sigma) <- tcInferSigma $ noLoc $ syn_expr op
        ; (result, expr_wrap, arg_wraps, res_wrap)
            <- tcSynArgA orig sigma arg_tys res_ty $
               thing_inside
-       ; return (result, SyntaxExpr { syn_expr      = mkHsWrap expr_wrap expr
+       ; return (result, SyntaxExpr { syn_expr = mkHsWrap expr_wrap $ unLoc expr
                                     , syn_arg_wraps = arg_wraps
                                     , syn_res_wrap  = res_wrap }) }
-
-tcSyntaxOpGen _ other _ _ _ = pprPanic "tcSyntaxOp" (ppr other)
 
 {-
 Note [tcSynArg]

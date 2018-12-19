@@ -156,7 +156,7 @@ import TcEvidence
 import Type
 import Class    ( Class )
 import TyCon    ( TyCon, TyConFlavour, tyConKind )
-import TyCoRep  ( CoercionHole(..), coHoleCoVar )
+import TyCoRep  ( coHoleCoVar )
 import Coercion ( Coercion, mkHoleCo )
 import ConLike  ( ConLike(..) )
 import DataCon  ( DataCon, dataConUserType, dataConOrigArgTys )
@@ -557,7 +557,8 @@ data TcGblEnv
 
         tcg_dus       :: DefUses,   -- ^ What is defined in this module and what is used.
         tcg_used_gres :: TcRef [GlobalRdrElt],  -- ^ Records occurrences of imported entities
-          -- See Note [Tracking unused binding and imports]
+          -- One entry for each occurrence; but may have different GREs for
+          -- the same Name See Note [Tracking unused binding and imports]
 
         tcg_keep :: TcRef NameSet,
           -- ^ Locally-defined top-level names to keep alive.
@@ -1699,7 +1700,7 @@ data Ct
        --   * tv not in tvs(rhs)   (occurs check)
        --   * If tv is a TauTv, then rhs has no foralls
        --       (this avoids substituting a forall for the tyvar in other types)
-       --   * typeKind ty `tcEqKind` typeKind tv; Note [Ct kind invariant]
+       --   * tcTypeKind ty `tcEqKind` tcTypeKind tv; Note [Ct kind invariant]
        --   * rhs may have at most one top-level cast
        --   * rhs (perhaps under the one cast) is not necessarily function-free,
        --       but it has no top-level function.
@@ -1722,7 +1723,7 @@ data Ct
   | CFunEqCan {  -- F xis ~ fsk
        -- Invariants:
        --   * isTypeFamilyTyCon cc_fun
-       --   * typeKind (F xis) = tyVarKind fsk; Note [Ct kind invariant]
+       --   * tcTypeKind (F xis) = tyVarKind fsk; Note [Ct kind invariant]
        --   * always Nominal role
       cc_ev     :: CtEvidence,  -- See Note [Ct/evidence invariant]
       cc_fun    :: TyCon,       -- A type function
@@ -1983,8 +1984,12 @@ tyCoFVsOfImplic :: Implication -> FV
 tyCoFVsOfImplic (Implic { ic_skols = skols
                         , ic_given = givens
                         , ic_wanted = wanted })
-  = FV.delFVs (mkVarSet skols `unionVarSet` mkVarSet givens)
-      (tyCoFVsOfWC wanted `unionFV` tyCoFVsOfTypes (map evVarPred givens))
+  | isEmptyWC wanted
+  = emptyFV
+  | otherwise
+  = tyCoFVsVarBndrs skols  $
+    tyCoFVsVarBndrs givens $
+    tyCoFVsOfWC wanted
 
 tyCoFVsOfBag :: (a -> FV) -> Bag a -> FV
 tyCoFVsOfBag tvs_of = foldrBag (unionFV . tvs_of) emptyFV
@@ -3506,8 +3511,10 @@ data CtOrigin
   | NegateOrigin                        -- Occurrence of syntactic negation
 
   | ArithSeqOrigin (ArithSeqInfo GhcRn) -- [x..], [x..y] etc
+  | AssocFamPatOrigin   -- When matching the patterns of an associated
+                        -- family instance with that of its parent class
   | SectionOrigin
-  | TupleOrigin                        -- (..,..)
+  | TupleOrigin         -- (..,..)
   | ExprSigOrigin       -- e :: ty
   | PatSigOrigin        -- p :: ty
   | PatOrigin           -- Instantiating a polytyped pattern at a constructor
@@ -3725,6 +3732,9 @@ pprCtOrigin (KindEqOrigin t1 (Just t2) _ _)
   = hang (ctoHerald <+> text "a kind equality arising from")
        2 (sep [ppr t1, char '~', ppr t2])
 
+pprCtOrigin AssocFamPatOrigin
+  = text "when matching a family LHS with its class instance head"
+
 pprCtOrigin (KindEqOrigin t1 Nothing _ _)
   = hang (ctoHerald <+> text "a kind equality when matching")
        2 (ppr t1)
@@ -3796,6 +3806,7 @@ pprCtO IfOrigin              = text "an if expression"
 pprCtO (LiteralOrigin lit)   = hsep [text "the literal", quotes (ppr lit)]
 pprCtO (ArithSeqOrigin seq)  = hsep [text "the arithmetic sequence", quotes (ppr seq)]
 pprCtO SectionOrigin         = text "an operator section"
+pprCtO AssocFamPatOrigin     = text "the LHS of a famly instance"
 pprCtO TupleOrigin           = text "a tuple"
 pprCtO NegateOrigin          = text "a use of syntactic negation"
 pprCtO (ScOrigin n)          = text "the superclasses of an instance declaration"

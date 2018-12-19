@@ -50,7 +50,6 @@ import System.Directory
 import System.FilePath
 import Control.Monad
 import Data.Time
-import Data.List        ( foldl' )
 
 
 type FileExt = String   -- Filename extension
@@ -483,23 +482,27 @@ mkHomeModLocation2 dflags mod src_basename ext = do
 
        obj_fn = mkObjPath  dflags src_basename mod_basename
        hi_fn  = mkHiPath   dflags src_basename mod_basename
+       hie_fn = mkHiePath  dflags src_basename mod_basename
 
    return (ModLocation{ ml_hs_file   = Just (src_basename <.> ext),
                         ml_hi_file   = hi_fn,
-                        ml_obj_file  = obj_fn })
+                        ml_obj_file  = obj_fn,
+                        ml_hie_file  = hie_fn })
 
 mkHiOnlyModLocation :: DynFlags -> Suffix -> FilePath -> String
                     -> IO ModLocation
 mkHiOnlyModLocation dflags hisuf path basename
  = do let full_basename = path </> basename
           obj_fn = mkObjPath  dflags full_basename basename
+          hie_fn = mkHiePath  dflags full_basename basename
       return ModLocation{    ml_hs_file   = Nothing,
                              ml_hi_file   = full_basename <.> hisuf,
                                 -- Remove the .hi-boot suffix from
                                 -- hi_file, if it had one.  We always
                                 -- want the name of the real .hi file
                                 -- in the ml_hi_file field.
-                             ml_obj_file  = obj_fn
+                             ml_obj_file  = obj_fn,
+                             ml_hie_file  = hie_fn
                   }
 
 -- | Constructs the filename of a .o file for a given source file.
@@ -532,6 +535,21 @@ mkHiPath dflags basename mod_basename = hi_basename <.> hisuf
 
                 hi_basename | Just dir <- hidir = dir </> mod_basename
                             | otherwise         = basename
+
+-- | Constructs the filename of a .hie file for a given source file.
+-- Does /not/ check whether the .hie file exists
+mkHiePath
+  :: DynFlags
+  -> FilePath           -- the filename of the source file, minus the extension
+  -> String             -- the module name with dots replaced by slashes
+  -> FilePath
+mkHiePath dflags basename mod_basename = hie_basename <.> hiesuf
+ where
+                hiedir = hieDir dflags
+                hiesuf = hieSuf dflags
+
+                hie_basename | Just dir <- hiedir = dir </> mod_basename
+                             | otherwise          = basename
 
 
 
@@ -604,7 +622,7 @@ cannotFindInterface  :: DynFlags -> ModuleName -> InstalledFindResult -> SDoc
 cannotFindInterface = cantFindInstalledErr (sLit "Failed to load interface for")
                                            (sLit "Ambiguous interface for")
 
-cantFindErr :: LitString -> LitString -> DynFlags -> ModuleName -> FindResult
+cantFindErr :: PtrString -> PtrString -> DynFlags -> ModuleName -> FindResult
             -> SDoc
 cantFindErr _ multiple_found _ mod_name (FoundMultiple mods)
   | Just pkgs <- unambiguousPackages
@@ -751,8 +769,8 @@ cantFindErr cannot_find _ dflags mod_name find_result
                     <+> ppr (packageConfigId pkg))
               | otherwise = Outputable.empty
 
-cantFindInstalledErr :: LitString -> LitString -> DynFlags -> ModuleName -> InstalledFindResult
-            -> SDoc
+cantFindInstalledErr :: PtrString -> PtrString -> DynFlags -> ModuleName
+                     -> InstalledFindResult -> SDoc
 cantFindInstalledErr cannot_find _ dflags mod_name find_result
   = ptext cannot_find <+> quotes (ppr mod_name)
     $$ more_info

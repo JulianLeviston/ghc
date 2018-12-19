@@ -143,7 +143,6 @@ import Kind
 import TcType
 import DynFlags
 import Type
-import TyCoRep( coHoleCoVar )
 import Coercion
 import Unify
 
@@ -175,7 +174,7 @@ import Control.Monad
 import qualified Control.Monad.Fail as MonadFail
 import MonadUtils
 import Data.IORef
-import Data.List ( foldl', partition, mapAccumL )
+import Data.List ( partition, mapAccumL )
 
 #if defined(DEBUG)
 import Digraph
@@ -2869,7 +2868,7 @@ checkTvConstraintsTcS skol_info skol_tvs (TcS thing_inside)
                          -- does not emit any work-list constraints
              new_tcs_env = tcs_env { tcs_worklist = wl_panic }
 
-       ; ((res, wanteds), new_tclvl) <- TcM.pushTcLevelM $
+       ; (new_tclvl, (res, wanteds)) <- TcM.pushTcLevelM $
                                         thing_inside new_tcs_env
 
        ; unless (null wanteds) $
@@ -2909,7 +2908,7 @@ checkConstraintsTcS skol_info skol_tvs given (TcS thing_inside)
                          -- does not emit any work-list constraints
              new_tcs_env = tcs_env { tcs_worklist = wl_panic }
 
-       ; ((res, wanteds), new_tclvl) <- TcM.pushTcLevelM $
+       ; (new_tclvl, (res, wanteds)) <- TcM.pushTcLevelM $
                                         thing_inside new_tcs_env
 
        ; ev_binds_var <- TcM.newTcEvBinds

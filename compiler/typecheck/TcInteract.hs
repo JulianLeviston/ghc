@@ -27,7 +27,7 @@ import Class
 import TyCon
 import FunDeps
 import FamInst
-import ClsInst( ClsInstResult(..), InstanceWhat(..), safeOverlap )
+import ClsInst( InstanceWhat(..), safeOverlap )
 import FamInstEnv
 import Unify ( tcUnifyTyWithTFs, ruleMatchTyKiX )
 
@@ -40,7 +40,7 @@ import Bag
 import MonadUtils ( concatMapM, foldlM )
 
 import CoreSyn
-import Data.List( partition, foldl', deleteFirstsBy )
+import Data.List( partition, deleteFirstsBy )
 import SrcLoc
 import VarEnv
 
@@ -1634,8 +1634,8 @@ solveByUnification wd tv xi
        ; traceTcS "Sneaky unification:" $
                        vcat [text "Unifies:" <+> ppr tv <+> text ":=" <+> ppr xi,
                              text "Coercion:" <+> pprEq tv_ty xi,
-                             text "Left Kind is:" <+> ppr (typeKind tv_ty),
-                             text "Right Kind is:" <+> ppr (typeKind xi) ]
+                             text "Left Kind is:" <+> ppr (tcTypeKind tv_ty),
+                             text "Right Kind is:" <+> ppr (tcTypeKind xi) ]
 
        ; unifyTyVar tv xi
        ; setEvBindIfWanted wd (evCoercion (mkTcNomReflCo xi)) }

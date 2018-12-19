@@ -82,7 +82,7 @@ import Maybes
 
 import System.Environment ( getEnv )
 import FastString
-import ErrUtils         ( debugTraceMsg, MsgDoc, printInfoForUser )
+import ErrUtils         ( debugTraceMsg, MsgDoc, dumpIfSet_dyn )
 import Exception
 
 import System.Directory
@@ -95,7 +95,6 @@ import Data.List as List
 import Data.Map (Map)
 import Data.Set (Set)
 import Data.Monoid (First(..))
-import Data.Semigroup   ( Semigroup )
 import qualified Data.Semigroup as Semigroup
 import qualified Data.Map as Map
 import qualified Data.Map.Strict as MapStrict
@@ -1584,9 +1583,8 @@ mkPackageState dflags dbs preload0 = do
       mod_map2 = mkUnusableModuleToPkgConfAll unusable
       mod_map = Map.union mod_map1 mod_map2
 
-  when (dopt Opt_D_dump_mod_map dflags) $
-      printInfoForUser (dflags { pprCols = 200 })
-                       alwaysQualify (pprModuleMap mod_map)
+  dumpIfSet_dyn (dflags { pprCols = 200 }) Opt_D_dump_mod_map "Mod Map"
+    (pprModuleMap mod_map)
 
   -- Force pstate to avoid leaking the dflags0 passed to mkPackageState
   let !pstate = PackageState{

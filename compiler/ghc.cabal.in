@@ -170,6 +170,7 @@ Library
         typecheck
         types
         utils
+        hieFile
 
     -- we use an explicit Prelude
     Default-Extensions:
@@ -179,6 +180,11 @@ Library
         GhcPrelude
 
     Exposed-Modules:
+        HieTypes
+        HieDebug
+        HieBin
+        HieUtils
+        HieAst
         Ar
         FileCleanup
         DriverBkp
@@ -433,6 +439,11 @@ Library
         SimplStg
         StgStats
         StgCse
+        StgLiftLams
+        StgLiftLams.Analysis
+        StgLiftLams.LiftM
+        StgLiftLams.Transformation
+        StgSubst
         UnariseStg
         RepType
         Rules
@@ -441,6 +452,7 @@ Library
         CoreToStg
         StgLint
         StgSyn
+        StgFVs
         CallArity
         DmdAnal
         Exitify
@@ -558,6 +570,8 @@ Library
             TargetReg
             NCGMonad
             Instruction
+            BlockLayout
+            CFG
             Format
             Reg
             RegClass

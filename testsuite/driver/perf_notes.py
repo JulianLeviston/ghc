@@ -20,6 +20,20 @@ from math import ceil, trunc
 from testutil import passed, failBecause
 
 
+# Check if "git rev-parse" can be run successfully.
+# True implies the current directory is a git repo.
+def inside_git_repo():
+    try:
+        subprocess.check_call(['git', 'rev-parse', 'HEAD'],
+                              stdout=subprocess.DEVNULL)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+# Check if the worktree is dirty.
+def is_worktree_dirty():
+    return subprocess.check_output(['git', 'status', '--porcelain']) != b''
+
 #
 # Some data access functions. A the moment this uses git notes.
 #
